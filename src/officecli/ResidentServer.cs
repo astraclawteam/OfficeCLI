@@ -1646,7 +1646,8 @@ public class ResidentServer : IDisposable
                 }
             }
             else if (_handler is OfficeCli.Handlers.ExcelHandler excelShotHandler)
-                html = CommandBuilder.RenderViaRegistry(excelShotHandler, "xlsx", new OfficeCli.Core.Rendering.RenderOptions())!;
+                html = CommandBuilder.RenderViaRegistry(excelShotHandler, "xlsx",
+                    new OfficeCli.Core.Rendering.RenderOptions { CellRange = rangeArg })!;
             else if (_handler is OfficeCli.Handlers.WordHandler wordShotGrid && gridCols != 0)
             {
                 // Contact-sheet grid — mirrors CommandBuilder.View.cs's docx grid
@@ -1740,9 +1741,12 @@ public class ResidentServer : IDisposable
             {
                 var tmpHtml = Path.Combine(Path.GetTempPath(), $"officecli_preview_{Path.GetFileNameWithoutExtension(_filePath)}_{DateTime.Now:HHmmss}_{Guid.NewGuid():N}.html");
                 File.WriteAllText(tmpHtml, html!);
+                var defaultSheet = _handler is OfficeCli.Handlers.ExcelHandler excelClip
+                    ? excelClip.GetDefaultVisibleSheetName()
+                    : null;
                 var rs = rangeArg != null
                     ? OfficeCli.Core.HtmlScreenshot.CaptureClipped(tmpHtml, pngPath,
-                        OfficeCli.Core.HtmlScreenshot.ResolveClipDataPaths(rangeArg))
+                        OfficeCli.Core.HtmlScreenshot.ResolveClipDataPaths(rangeArg, defaultSheet))
                     : OfficeCli.Core.HtmlScreenshot.Capture(tmpHtml, pngPath, sw, sh);
                 try { File.Delete(tmpHtml); } catch { /* ignore */ }
                 if (!rs.Ok)

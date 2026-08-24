@@ -32,6 +32,13 @@ public sealed class RenderOptions
     /// When both this and Start/End are set, the renderer prefers the explicit range.</summary>
     public string? PageFilter { get; init; }
 
+    /// <summary>
+    /// Spreadsheet range that must be present in the rendered grid. This lets
+    /// screenshot clipping include requested trailing blank rows/columns rather
+    /// than silently shrinking to the workbook's used range.
+    /// </summary>
+    public string? CellRange { get; init; }
+
     /// <summary>Number of columns when laying pages out in a grid. 0 = none/auto.</summary>
     public int GridColumns { get; init; }
 

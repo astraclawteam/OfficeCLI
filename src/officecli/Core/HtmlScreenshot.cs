@@ -220,7 +220,7 @@ internal static class HtmlScreenshot
         var measureScript =
             "<script>function _clipRun(){" +
             prelude +
-            "var els=_clipEls();if(els.length===0){console.log('CLIPRECT:NOTFOUND');return;}" +
+            "var els=_clipEls();if(els.length!==_clipPaths.length){console.log('CLIPRECT:NOTFOUND');return;}" +
             "var x1=1e9,y1=1e9,x2=-1e9,y2=-1e9;els.forEach(function(el){var r=el.getBoundingClientRect();" +
             "var x=r.left+window.scrollX,y=r.top+window.scrollY;" +
             "if(x<x1)x1=x;if(y<y1)y1=y;if(x+r.width>x2)x2=x+r.width;if(y+r.height>y2)y2=y+r.height;});" +
@@ -333,10 +333,15 @@ internal static class HtmlScreenshot
     /// Two forms: an xlsx range `/Sheet1/A1:C3` (also `Sheet1!A1:C3`) resolves
     /// to its two corner cell paths; anything else is a single element
     /// data-path used verbatim (`/slide[1]/shape[2]`, `/body/table[1]`, …).
+    /// A bare range such as `A1:C3` is accepted when the caller supplies the
+    /// workbook's default visible sheet.
     /// </summary>
-    public static List<string> ResolveClipDataPaths(string clip)
+    public static List<string> ResolveClipDataPaths(string clip, string? defaultSheet = null)
     {
         var c = clip.Trim();
+        if (!string.IsNullOrWhiteSpace(defaultSheet)
+            && System.Text.RegularExpressions.Regex.IsMatch(c, @"^[A-Za-z]{1,3}\d+:[A-Za-z]{1,3}\d+$"))
+            c = $"/{defaultSheet}/{c}";
         // Sheet1!A1:C3 → /Sheet1/A1:C3
         var bang = c.IndexOf('!');
         if (bang > 0 && !c.StartsWith('/'))

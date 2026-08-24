@@ -3184,7 +3184,7 @@ public partial class WordHandler
         .page-wrapper {{ margin: 0 auto 40px; transition: width 0.15s ease, height 0.15s ease; }}
         .page {{ margin: 0 auto; padding: {mT} {mR} {mB} {mL};
             box-shadow: 0 2px 8px rgba(0,0,0,0.15); border-radius: 4px;
-            min-height: {pageH}; line-height: {lh}; font-size: {sz}; position: relative; overflow-x: auto;
+            min-height: {pageH}; line-height: {lh}; font-size: {sz}; position: relative; overflow-x: hidden;
             display: flex; flex-direction: column; font-kerning: none; letter-spacing: 0;
             transform-origin: left top; transition: transform 0.15s ease;
             isolation: isolate;
@@ -3202,7 +3202,7 @@ public partial class WordHandler
            Table cells still need anywhere (see th,td rule below) so the R32
            fixed-grid column min-content collapses and long content wraps inside
            its column instead of overflowing the page. */
-        .page-body {{ flex: 1; display: flex; flex-direction: column; text-autospace: ideograph-alpha ideograph-numeric; overflow-wrap: break-word; {hyphensCss} }}
+        .page-body {{ flex: 1; display: flex; flex-direction: column; min-width: 0; width: 100%; max-width: 100%; text-autospace: ideograph-alpha ideograph-numeric; overflow-wrap: break-word; {hyphensCss} }}
         /* Multi-column sections: flex ignores column-count; switch to block. */
         .page-body[style*=""column-count""] {{ display: block; }}
         /* A table is typically full text-column width; inside a multi-column
@@ -3291,7 +3291,7 @@ public partial class WordHandler
         img {{ max-width: 100%; height: auto; }}
         img {{ writing-mode: horizontal-tb; }}
         .img-error {{ color: #999; font-style: italic; }}
-        table {{ border-collapse: collapse; font-size: {sz}; }}
+        table {{ border-collapse: collapse; font-size: {sz}; max-width: 100%; }}
         td.tsf span, td.tsf div {{ font-size: inherit !important; color: inherit !important; text-align: inherit !important; }}
         .wg {{ margin: 0.3em 0; }}
         .wg p {{ padding: 0; margin: 0.05em 0; }}

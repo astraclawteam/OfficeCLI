@@ -1,4 +1,4 @@
-$repo = "iOfficeAI/OfficeCLI"
+$repo = "astraclawteam/OfficeCLI"
 # Select the native asset for the machine architecture. PROCESSOR_ARCHITECTURE
 # reports the *current process* arch (x86/AMD64 when an emulated 32/64-bit
 # PowerShell runs on ARM64); PROCESSOR_ARCHITEW6432 then reveals the real ARM64
@@ -7,38 +7,28 @@ $arch = if ($env:PROCESSOR_ARCHITEW6432) { $env:PROCESSOR_ARCHITEW6432 } else { 
 $asset = if ($arch -eq "ARM64") { "officecli-win-arm64.exe" } else { "officecli-win-x64.exe" }
 $binary = "officecli.exe"
 
-# Mirror primary, github fallback. The mirror is exercised first so issues
-# surface there fast; github is the safety net when CF or the mirror is
-# unreachable.
-$mirrorBase = "https://d.officecli.ai"
+$releaseBase = "https://github.com/$repo"
 $githubReleaseBase = "https://github.com/$repo/releases/latest/download"
 $githubRawBase = "https://raw.githubusercontent.com/$repo/main"
 
-function Fetch-WithFallback {
-    param([string]$Primary, [string]$Fallback, [string]$OutFile)
+function Fetch-File {
+    param([string]$Url, [string]$OutFile)
     try {
-        Invoke-WebRequest -Uri $Primary -OutFile $OutFile -TimeoutSec 30 -ErrorAction Stop
-        Write-Host "  (via mirror)"
+        Invoke-WebRequest -Uri $Url -OutFile $OutFile -TimeoutSec 300 -ErrorAction Stop
         return $true
     } catch {
-        Write-Host "  mirror unreachable, falling back to github..."
-        try {
-            Invoke-WebRequest -Uri $Fallback -OutFile $OutFile -TimeoutSec 300 -ErrorAction Stop
-            return $true
-        } catch {
-            return $false
-        }
+        return $false
     }
 }
 
 # Resolve-Version
 # Discover the latest release tag (vX.Y.Z) by following the /releases/latest
-# redirect and reading the final tag URL. Mirror first, github fallback.
+# redirect and reading the final tag URL.
 # Returns the tag on success, $null on failure. This lets us download from the
 # IMMUTABLE versioned path instead of the mutable /releases/latest/download/
 # path — see download section below.
 function Resolve-Version {
-    foreach ($base in @("$mirrorBase/releases/latest", "https://github.com/$repo/releases/latest")) {
+    foreach ($base in @("$releaseBase/releases/latest")) {
         try {
             $resp = Invoke-WebRequest -Uri $base -MaximumRedirection 5 -TimeoutSec 30 -ErrorAction Stop
             $finalUrl = $resp.BaseResponse.ResponseUri.AbsoluteUri
@@ -68,22 +58,20 @@ $source = $null
 $version = Resolve-Version
 if ($version) {
     Write-Host "Latest version: $version"
-    $mirrorAssetBase = "$mirrorBase/releases/download/$version"
-    $githubAssetBase = "https://github.com/$repo/releases/download/$version"
+    $assetBase = "$releaseBase/releases/download/$version"
 } else {
     Write-Host "Could not resolve latest version; falling back to 'latest' path."
-    $mirrorAssetBase = "$mirrorBase/releases/latest/download"
-    $githubAssetBase = $githubReleaseBase
+    $assetBase = $githubReleaseBase
 }
 
-# Step 1: Try downloading (mirror first, github fallback)
+# Step 1: Download from the maintained fork's immutable release stream.
 $tempFile = "$env:TEMP\$binary"
 Write-Host "Downloading OfficeCLI..."
-if (Fetch-WithFallback "$mirrorAssetBase/$asset" "$githubAssetBase/$asset" $tempFile) {
+if (Fetch-File "$assetBase/$asset" $tempFile) {
     # Verify checksum if available
     $checksumOk = $false
     $checksumFile = "$env:TEMP\officecli-SHA256SUMS"
-    if (Fetch-WithFallback "$mirrorAssetBase/SHA256SUMS" "$githubAssetBase/SHA256SUMS" $checksumFile) {
+    if (Fetch-File "$assetBase/SHA256SUMS" $checksumFile) {
         $checksumContent = Get-Content $checksumFile
         # Match the filename column EXACTLY (not a regex/substring): `-match` is
         # an unanchored regex where `.`/`-` are metacharacters, so it could match
@@ -190,7 +178,7 @@ if (-not (Test-Path $skillMarker)) {
     if ($skillTargets.Count -gt 0) {
         Write-Host "Downloading officecli skill..."
         $tempSkill = "$env:TEMP\officecli-skill.md"
-        if (Fetch-WithFallback "$mirrorBase/SKILL.md" "$githubRawBase/SKILL.md" $tempSkill) {
+        if (Fetch-File "$githubRawBase/SKILL.md" $tempSkill) {
             foreach ($target in $skillTargets) {
                 New-Item -ItemType Directory -Force -Path $target | Out-Null
                 Copy-Item -Force $tempSkill "$target\SKILL.md"

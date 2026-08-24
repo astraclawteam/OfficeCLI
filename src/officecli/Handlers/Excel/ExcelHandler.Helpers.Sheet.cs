@@ -290,6 +290,17 @@ public partial class ExcelHandler
     private List<(string Name, WorksheetPart Part)> GetWorksheets() => GetWorksheets(_doc);
 
     /// <summary>
+    /// The sheet shown first by the HTML preview. Used to qualify a user-facing
+    /// bare screenshot range such as A1:M20 without requiring the sheet name.
+    /// </summary>
+    public string? GetDefaultVisibleSheetName()
+    {
+        var sheets = GetWorksheets();
+        return sheets.FirstOrDefault(s => !IsSheetHidden(s.Name)).Name
+            ?? sheets.FirstOrDefault().Name;
+    }
+
+    /// <summary>
     /// True when the workbook-level &lt;sheet&gt; element for the given name has
     /// State Hidden or VeryHidden. Used by the HTML preview to omit hidden sheets
     /// from the tab strip and content slider (matching real Excel).

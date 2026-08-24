@@ -1,44 +1,29 @@
 #!/bin/bash
 set -e
 
-REPO="iOfficeAI/OfficeCLI"
+REPO="astraclawteam/OfficeCLI"
 BINARY_NAME="officecli"
 
-# Mirror primary, github fallback. The mirror is exercised first so issues
-# surface there fast; github is the final safety net.
-MIRROR_BASE="https://d.officecli.ai"
+RELEASE_BASE="https://github.com/$REPO"
 GITHUB_RELEASE_BASE="https://github.com/$REPO/releases/latest/download"
 GITHUB_RAW_BASE="https://raw.githubusercontent.com/$REPO/main"
 
-# fetch_with_fallback <primary_url> <fallback_url> <output_path>
-# Returns 0 if either source delivered the file, non-zero if both failed.
-# Short connect-timeout on primary so a dead mirror doesn't add minutes
-# of stall before falling through.
-fetch_with_fallback() {
-    local primary="$1" fallback="$2" out="$3"
-    if curl -fsSL --max-time 300 --connect-timeout 5 "$primary" -o "$out" 2>/dev/null; then
-        echo "  (via mirror)"
-        return 0
-    fi
-    echo "  mirror unreachable, falling back to github..."
-    curl -fsSL --max-time 300 "$fallback" -o "$out" 2>/dev/null
+# fetch_file <url> <output_path>
+fetch_file() {
+    local url="$1" out="$2"
+    curl -fsSL --max-time 300 --connect-timeout 5 "$url" -o "$out" 2>/dev/null
 }
 
 # resolve_version
 # Discover the latest release tag (vX.Y.Z) by following the /releases/latest
-# redirect and reading the final tag URL. Mirror first, github fallback.
+# redirect and reading the final tag URL.
 # Prints the tag on success, empty on failure.
 # This lets us download from the IMMUTABLE versioned path instead of the
 # mutable /releases/latest/download/ path — see download section below.
 resolve_version() {
     local url
-    url=$(curl -fsSL --max-time 30 --connect-timeout 5 -o /dev/null -w '%{url_effective}' \
-            "$MIRROR_BASE/releases/latest" 2>/dev/null)
-    case "$url" in
-        */releases/tag/v*) echo "${url##*/tag/}"; return 0 ;;
-    esac
     url=$(curl -fsSL --max-time 30 -o /dev/null -w '%{url_effective}' \
-            "https://github.com/$REPO/releases/latest" 2>/dev/null)
+            "$RELEASE_BASE/releases/latest" 2>/dev/null)
     case "$url" in
         */releases/tag/v*) echo "${url##*/tag/}"; return 0 ;;
     esac
@@ -102,26 +87,18 @@ SOURCE=""
 VERSION=$(resolve_version || true)
 if [ -n "$VERSION" ]; then
     echo "Latest version: $VERSION"
-    MIRROR_ASSET_BASE="$MIRROR_BASE/releases/download/$VERSION"
-    GITHUB_ASSET_BASE="https://github.com/$REPO/releases/download/$VERSION"
+    ASSET_BASE="$RELEASE_BASE/releases/download/$VERSION"
 else
     echo "Could not resolve latest version; falling back to 'latest' path."
-    MIRROR_ASSET_BASE="$MIRROR_BASE/releases/latest/download"
-    GITHUB_ASSET_BASE="$GITHUB_RELEASE_BASE"
+    ASSET_BASE="$GITHUB_RELEASE_BASE"
 fi
 
-# Step 1: Try downloading (mirror first, github fallback)
+# Step 1: Download from the maintained fork's immutable release stream.
 echo "Downloading OfficeCLI ($ASSET)..."
-if fetch_with_fallback \
-        "$MIRROR_ASSET_BASE/$ASSET" \
-        "$GITHUB_ASSET_BASE/$ASSET" \
-        "/tmp/$BINARY_NAME"; then
+if fetch_file "$ASSET_BASE/$ASSET" "/tmp/$BINARY_NAME"; then
     # Verify checksum if available
     CHECKSUM_OK=false
-    if fetch_with_fallback \
-            "$MIRROR_ASSET_BASE/SHA256SUMS" \
-            "$GITHUB_ASSET_BASE/SHA256SUMS" \
-            "/tmp/officecli-SHA256SUMS"; then
+    if fetch_file "$ASSET_BASE/SHA256SUMS" "/tmp/officecli-SHA256SUMS"; then
         # Match the filename column EXACTLY (field 2), not a substring: a
         # `grep "$ASSET"` could match several lines if one asset name is a
         # substring of another, yielding a multi-line EXPECTED that can never
@@ -247,10 +224,7 @@ if [ ! -f "$SKILL_MARKER" ]; then
 
     if [ -n "$SKILL_TARGETS" ]; then
         echo "Downloading officecli skill..."
-        if fetch_with_fallback \
-                "$MIRROR_BASE/SKILL.md" \
-                "$GITHUB_RAW_BASE/SKILL.md" \
-                "/tmp/officecli-skill.md"; then
+        if fetch_file "$GITHUB_RAW_BASE/SKILL.md" "/tmp/officecli-skill.md"; then
             for target in $SKILL_TARGETS; do
                 mkdir -p "$target"
                 cp "/tmp/officecli-skill.md" "$target/SKILL.md"

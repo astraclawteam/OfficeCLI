@@ -148,7 +148,7 @@ public partial class ExcelHandler
     /// Supports cell formatting (font, fill, borders, alignment), merged cells,
     /// column widths, row heights, frozen panes, and sheet tab switching.
     /// </summary>
-    public string ViewAsHtml()
+    public string ViewAsHtml(string? visibleRange = null)
     {
         using var _cul = InvariantCultureScope.Enter();
         var sb = new StringBuilder();
@@ -159,6 +159,7 @@ public partial class ExcelHandler
         // loops below.
         sheets = sheets.Where(s => !IsSheetHidden(s.Name)).ToList();
         if (sheets.Count == 0) sheets = GetWorksheets();
+        var requestedRange = TryParsePreviewRange(visibleRange, sheets.FirstOrDefault().Name);
         var wbStylesPart = _doc.WorkbookPart?.WorkbookStylesPart;
         var stylesheet = wbStylesPart?.Stylesheet;
 
@@ -242,7 +243,11 @@ public partial class ExcelHandler
             var pictures = CollectSheetPictures(worksheetPart);
             if (pictures.Count > 0)
                 charts.AddRange(pictures);
-            RenderSheetTable(sb, sheetName, renderPart, stylesheet, renderStyles, charts, sheetIdx, showGridLines);
+            var rangeMatchesSheet = requestedRange.HasValue
+                && requestedRange.Value.sheet.Equals(sheetName, StringComparison.OrdinalIgnoreCase);
+            RenderSheetTable(sb, sheetName, renderPart, stylesheet, renderStyles, charts, sheetIdx, showGridLines,
+                rangeMatchesSheet ? requestedRange!.Value.maxRow : 0,
+                rangeMatchesSheet ? requestedRange!.Value.maxCol : 0);
             sb.AppendLine("</div>");
         }
         sb.AppendLine("</div>");
@@ -292,6 +297,43 @@ public partial class ExcelHandler
         return sb.ToString();
     }
 
+    private static (string sheet, int maxRow, int maxCol)? TryParsePreviewRange(string? range, string? defaultSheet)
+    {
+        if (string.IsNullOrWhiteSpace(range)) return null;
+        var value = range.Trim();
+        string? sheet = null;
+        string? cells = null;
+        var slash = System.Text.RegularExpressions.Regex.Match(value,
+            @"^/([^/]+)/([A-Za-z]{1,3}\d+:[A-Za-z]{1,3}\d+)$");
+        if (slash.Success)
+        {
+            sheet = slash.Groups[1].Value;
+            cells = slash.Groups[2].Value;
+        }
+        else
+        {
+            var bang = System.Text.RegularExpressions.Regex.Match(value,
+                @"^([^!]+)!([A-Za-z]{1,3}\d+:[A-Za-z]{1,3}\d+)$");
+            if (bang.Success)
+            {
+                sheet = bang.Groups[1].Value.Trim('\'');
+                cells = bang.Groups[2].Value;
+            }
+            else if (System.Text.RegularExpressions.Regex.IsMatch(value,
+                         @"^[A-Za-z]{1,3}\d+:[A-Za-z]{1,3}\d+$"))
+            {
+                sheet = defaultSheet;
+                cells = value;
+            }
+        }
+        if (string.IsNullOrWhiteSpace(sheet) || string.IsNullOrWhiteSpace(cells)) return null;
+        var endpoints = cells.Split(':');
+        var (firstCol, firstRow) = ParseCellReference(endpoints[0]);
+        var (lastCol, lastRow) = ParseCellReference(endpoints[1]);
+        return (sheet, Math.Max(firstRow, lastRow),
+            Math.Max(ColumnNameToIndex(firstCol), ColumnNameToIndex(lastCol)));
+    }
+
     /// <summary>
     /// Get the number of sheets (for watch notifications).
     /// </summary>
@@ -311,11 +353,11 @@ public partial class ExcelHandler
 
     private void RenderSheetTable(StringBuilder sb, string sheetName, WorksheetPart worksheetPart, Stylesheet? stylesheet, RenderStyleArrays renderStyles,
         List<(int fromRow, int toRow, int fromCol, int toCol, double colOffsetPt, string html)>? charts = null, int sheetIdx = 0,
-        bool showGridLines = true)
+        bool showGridLines = true, int minimumRow = 0, int minimumCol = 0)
     {
         var ws = GetSheet(worksheetPart);
         var sheetData = ws.GetFirstChild<SheetData>();
-        if (sheetData == null && (charts == null || charts.Count == 0))
+        if (sheetData == null && (charts == null || charts.Count == 0) && minimumRow <= 0 && minimumCol <= 0)
         {
             if (worksheetPart.DrawingsPart?.WorksheetDrawing == null)
                 sb.AppendLine("<div class=\"empty-sheet\">Empty sheet</div>");
@@ -447,6 +489,12 @@ public partial class ExcelHandler
         cfMaxCol = Math.Min(cfMaxCol, 200);
         if (cfMaxRow > maxRow) maxRow = cfMaxRow;
         if (cfMaxCol > maxCol) maxCol = cfMaxCol;
+
+        // A screenshot range is a delivery request, not merely a query over
+        // populated cells. Materialize its trailing blank rows/columns so the
+        // crop exactly reflects A1:M20 even when the used range ends at L17.
+        if (minimumRow > maxRow) maxRow = Math.Min(minimumRow, GetHtmlRowCap());
+        if (minimumCol > maxCol) maxCol = Math.Min(minimumCol, 200);
 
         // Empty sheet (no cells and no charts)
         if (maxRow == 0 || maxCol == 0)

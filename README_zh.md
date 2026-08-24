@@ -8,7 +8,7 @@
 
 **OfficeCLI 的内置 HTML 渲染引擎，高度还原文档原貌 —— 这正是让 AI 拥有"眼睛"的关键。** 它把 `.docx` / `.xlsx` / `.pptx` 渲染为 HTML 或 PNG，闭合"渲染 → 看 → 改"的循环。
 
-[![GitHub Release](https://img.shields.io/github/v/release/iOfficeAI/OfficeCLI)](https://github.com/iOfficeAI/OfficeCLI/releases)
+[![GitHub Release](https://img.shields.io/github/v/release/astraclawteam/OfficeCLI)](https://github.com/astraclawteam/OfficeCLI/releases)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 
 [English](README.md) | **中文** | [日本語](README_ja.md) | [한국어](README_ko.md)
@@ -76,7 +76,7 @@ curl -fsSL https://officecli.ai/SKILL.md
 
 **方式 A — 图形界面：** 安装 [**AionUi**](https://github.com/iOfficeAI/AionUi) — 一款桌面应用，用自然语言就能创建和编辑 Office 文档，底层由 OfficeCLI 驱动。只需描述你想要什么，AionUi 帮你搞定。
 
-**方式 B — 命令行：** 从 [GitHub Releases](https://github.com/iOfficeAI/OfficeCLI/releases) 下载对应平台的二进制文件，然后运行：
+**方式 B — 命令行：** 从 [GitHub Releases](https://github.com/astraclawteam/OfficeCLI/releases) 下载对应平台的二进制文件，然后运行：
 
 ```bash
 officecli install
@@ -88,8 +88,8 @@ officecli install
 
 ```bash
 # 1. 安装（macOS / Linux）— 也可以：brew install officecli / npm install -g @officecli/officecli
-curl -fsSL https://raw.githubusercontent.com/iOfficeAI/OfficeCLI/main/install.sh | bash
-# Windows (PowerShell): irm https://raw.githubusercontent.com/iOfficeAI/OfficeCLI/main/install.ps1 | iex
+curl -fsSL https://raw.githubusercontent.com/astraclawteam/OfficeCLI/main/install.sh | bash
+# Windows (PowerShell): irm https://raw.githubusercontent.com/astraclawteam/OfficeCLI/main/install.ps1 | iex
 
 # 2. 创建一个空白 PowerPoint
 officecli create deck.pptx
@@ -204,10 +204,10 @@ officecli add deck.pptx / --type slide --prop title="Q4 Report"
 
 ```bash
 # macOS / Linux
-curl -fsSL https://raw.githubusercontent.com/iOfficeAI/OfficeCLI/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/astraclawteam/OfficeCLI/main/install.sh | bash
 
 # Windows (PowerShell)
-irm https://raw.githubusercontent.com/iOfficeAI/OfficeCLI/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/astraclawteam/OfficeCLI/main/install.ps1 | iex
 ```
 
 **或通过包管理器安装：**
@@ -223,7 +223,7 @@ scoop install officecli
 npm install -g @officecli/officecli
 ```
 
-**或手动下载** [GitHub Releases](https://github.com/iOfficeAI/OfficeCLI/releases)：
+**或手动下载** [GitHub Releases](https://github.com/astraclawteam/OfficeCLI/releases)：
 
 | 平台 | 文件名 |
 |------|--------|
@@ -629,7 +629,7 @@ print(slide["attributes"]["text"])
 
 [Apache License 2.0](LICENSE)
 
-欢迎通过 [GitHub Issues](https://github.com/iOfficeAI/OfficeCLI/issues) 提交 Bug 报告和贡献代码。
+欢迎通过 [GitHub Issues](https://github.com/astraclawteam/OfficeCLI/issues) 向这个维护分支提交 Bug 报告和贡献代码。
 
 ---
 
@@ -649,8 +649,8 @@ yaml-frontmatter:
   ai-agent-compatible: true
   mcp-server: true
   skill-file: SKILL.md
-  install-command-unix: curl -fsSL https://raw.githubusercontent.com/iOfficeAI/OfficeCLI/main/install.sh | bash
-  install-command-windows: irm https://raw.githubusercontent.com/iOfficeAI/OfficeCLI/main/install.ps1 | iex
+  install-command-unix: curl -fsSL https://raw.githubusercontent.com/astraclawteam/OfficeCLI/main/install.sh | bash
+  install-command-windows: irm https://raw.githubusercontent.com/astraclawteam/OfficeCLI/main/install.ps1 | iex
 -->
 
 <!-- LLM/agent discovery metadata
@@ -667,6 +667,6 @@ ai-agent-compatible: true
 mcp-server: true
 skill-file: SKILL.md
 alternatives: python-docx, openpyxl, python-pptx, libreoffice --headless
-install-command-unix: curl -fsSL https://raw.githubusercontent.com/iOfficeAI/OfficeCLI/main/install.sh | bash
-install-command-windows: irm https://raw.githubusercontent.com/iOfficeAI/OfficeCLI/main/install.ps1 | iex
+install-command-unix: curl -fsSL https://raw.githubusercontent.com/astraclawteam/OfficeCLI/main/install.sh | bash
+install-command-windows: irm https://raw.githubusercontent.com/astraclawteam/OfficeCLI/main/install.ps1 | iex
 -->

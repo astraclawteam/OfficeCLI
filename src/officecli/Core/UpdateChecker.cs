@@ -28,15 +28,10 @@ internal static class UpdateChecker
     internal static string ConfigDir => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".officecli");
     private static string ConfigPath => Path.Combine(ConfigDir, "config.json");
-    private const string GitHubRepo = "iOfficeAI/OfficeCLI";
-    // PrimaryBase is the project-controlled mirror (Cloudflare-fronted nginx on
-    // a VPS that periodically syncs github releases). FallbackBase is the
-    // upstream of last resort. Order matters: the mirror is exercised on every
-    // daily check so issues surface fast, and CF edge caching makes it the
-    // fastest path for most users; github is the safety net when CF or the
-    // mirror is unreachable.
-    private const string PrimaryBase = "https://d.officecli.ai";
-    private const string FallbackBase = "https://github.com/iOfficeAI/OfficeCLI";
+    // AstraClaw maintains its release line in an independent fork. Do not fall
+    // back to the original project's mirror: it can legitimately publish a
+    // different "latest" version and would cross the immutable release stream.
+    private const string ReleaseBase = "https://github.com/astraclawteam/OfficeCLI";
     private const int CheckIntervalHours = 24;
 
     /// <summary>
@@ -108,7 +103,7 @@ internal static class UpdateChecker
 
             // Piggyback the diagram render's mermaid.js cache refresh on this daily
             // background pass (we're already once-per-24h and already reaching the
-            // mirror). Only revalidates an existing cache; independent of the binary
+            // release source). Only revalidates an existing cache; independent of the binary
             // update below, so it runs even for package-managed (Homebrew) installs.
             try { Diagram.MermaidImageRenderer.RefreshCacheIfPresent(); } catch { /* best effort */ }
 
@@ -119,21 +114,18 @@ internal static class UpdateChecker
             // parsing the version out of the *final* URL (no API, no rate limit).
             //
             // Why follow the whole chain instead of reading the first Location:
-            // PrimaryBase 302s to /releases/tag/vX.Y.Z (its own URL, served
-            // from a mirror-maintained version file) and FallbackBase 302s
-            // through github's 2-hop release chain. Either way the *final*
-            // URL after redirects carries /tag/vX.Y.Z, so reading the first
-            // Location wouldn't work for the github fallback path.
+            // GitHub follows a redirect chain before reaching
+            // /releases/tag/vX.Y.Z, so reading only the first Location is not
+            // sufficient.
             using var handler = new HttpClientHandler { AllowAutoRedirect = true };
             using var client = new HttpClient(handler);
-            // UA carries running version so the mirror can produce a version
-            // distribution from access logs without any extra telemetry.
+            // UA carries the running version for ordinary release diagnostics.
             AddUserAgent(client, currentVersion);
             client.Timeout = TimeSpan.FromSeconds(10);
 
             string? latestVersion = null;
-            string resolvedBase = FallbackBase;
-            foreach (var baseUrl in new[] { PrimaryBase, FallbackBase })
+            string resolvedBase = ReleaseBase;
+            foreach (var baseUrl in new[] { ReleaseBase })
             {
                 try
                 {

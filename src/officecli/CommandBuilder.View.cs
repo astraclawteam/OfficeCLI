@@ -304,7 +304,8 @@ static partial class CommandBuilder
                     }
                 }
                 else if (handler is OfficeCli.Handlers.ExcelHandler excelHandler)
-                    html = RenderViaRegistry(excelHandler, "xlsx", new OfficeCli.Core.Rendering.RenderOptions())!;
+                    html = RenderViaRegistry(excelHandler, "xlsx",
+                        new OfficeCli.Core.Rendering.RenderOptions { CellRange = clipArg })!;
                 else if (handler is OfficeCli.Handlers.WordHandler wordHandlerGrid && gridCols != 0)
                 {
                     // Contact-sheet grid: tile every page into an N-column (or auto)
@@ -453,9 +454,12 @@ static partial class CommandBuilder
                     // SECURITY: random token in temp filename — same rationale as the html/--browser path.
                     var tmpHtml = Path.Combine(Path.GetTempPath(), $"officecli_preview_{Path.GetFileNameWithoutExtension(file.Name)}_{DateTime.Now:HHmmss}_{Guid.NewGuid():N}.html");
                     File.WriteAllText(tmpHtml, html!);
+                    var defaultSheet = handler is OfficeCli.Handlers.ExcelHandler excelClip
+                        ? excelClip.GetDefaultVisibleSheetName()
+                        : null;
                     var r = clipArg != null
                         ? OfficeCli.Core.HtmlScreenshot.CaptureClipped(tmpHtml, pngPath,
-                            OfficeCli.Core.HtmlScreenshot.ResolveClipDataPaths(clipArg))
+                            OfficeCli.Core.HtmlScreenshot.ResolveClipDataPaths(clipArg, defaultSheet))
                         : OfficeCli.Core.HtmlScreenshot.Capture(tmpHtml, pngPath, screenshotWidth, screenshotHeight);
                     try { File.Delete(tmpHtml); } catch { /* ignore */ }
                     if (!r.Ok && r.Error == "clip_target_not_found")

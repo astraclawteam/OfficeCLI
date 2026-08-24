@@ -1347,11 +1347,27 @@ static partial class CommandBuilder
     {
         var @out = output ?? Console.Out;
         if (totalCount == 0) totalCount = results.Count;
+        var receipts = atomicRolledBack
+            ? results.Select(r => new BatchResult
+            {
+                Index = r.Index,
+                Success = false,
+                Output = r.Output,
+                Error = r.Error,
+                Code = r.Code,
+                Item = r.Item,
+                AttemptSucceeded = r.Success,
+                Committed = false,
+                RolledBack = r.Success,
+                Status = r.Success ? "rolled_back" : "failed",
+            }).ToList()
+            : results;
 
         if (json)
         {
-            var succeeded = results.Count(r => r.Success);
-            var failed = results.Count - succeeded;
+            var succeeded = receipts.Count(r => r.Success);
+            var failed = results.Count(r => !r.Success);
+            var rolledBack = atomicRolledBack ? results.Count(r => r.Success) : 0;
             var skipped = totalCount - results.Count;
 
             using var ms = new System.IO.MemoryStream();
@@ -1359,7 +1375,7 @@ static partial class CommandBuilder
             {
                 writer.WriteStartObject();
                 writer.WritePropertyName("results");
-                System.Text.Json.JsonSerializer.Serialize(writer, results, BatchJsonContext.Default.ListBatchResult);
+                System.Text.Json.JsonSerializer.Serialize(writer, receipts, BatchJsonContext.Default.ListBatchResult);
                 writer.WriteStartObject("summary");
                 writer.WriteNumber("total", totalCount);
                 writer.WriteNumber("executed", results.Count);
@@ -1369,7 +1385,12 @@ static partial class CommandBuilder
                 // Additive field, only present when the atomic default
                 // discarded the batch — parsers keying on the existing
                 // summary fields are unaffected.
-                if (atomicRolledBack) writer.WriteBoolean("atomicRolledBack", true);
+                if (atomicRolledBack)
+                {
+                    writer.WriteBoolean("atomicRolledBack", true);
+                    writer.WriteNumber("rolledBack", rolledBack);
+                    writer.WriteNumber("committed", 0);
+                }
                 writer.WriteEndObject();
                 writer.WriteEndObject();
             }
@@ -1393,11 +1414,15 @@ static partial class CommandBuilder
                     slimWriter.WriteString("outputFile", tempPath);
                     slimWriter.WriteNumber("outputSize", fullBytes.Length);
                     slimWriter.WriteStartArray("results");
-                    foreach (var r in results)
+                    foreach (var r in receipts)
                     {
                         slimWriter.WriteStartObject();
                         slimWriter.WriteNumber("index", r.Index);
                         slimWriter.WriteBoolean("success", r.Success);
+                        if (r.AttemptSucceeded.HasValue) slimWriter.WriteBoolean("attemptSucceeded", r.AttemptSucceeded.Value);
+                        if (r.Committed.HasValue) slimWriter.WriteBoolean("committed", r.Committed.Value);
+                        if (r.RolledBack.HasValue) slimWriter.WriteBoolean("rolledBack", r.RolledBack.Value);
+                        if (r.Status != null) slimWriter.WriteString("status", r.Status);
                         if (r.Error != null)
                         {
                             slimWriter.WriteString("error", r.Error);
@@ -1418,7 +1443,12 @@ static partial class CommandBuilder
                     slimWriter.WriteNumber("succeeded", succeeded);
                     slimWriter.WriteNumber("failed", failed);
                     slimWriter.WriteNumber("skipped", skipped);
-                    if (atomicRolledBack) slimWriter.WriteBoolean("atomicRolledBack", true);
+                    if (atomicRolledBack)
+                    {
+                        slimWriter.WriteBoolean("atomicRolledBack", true);
+                        slimWriter.WriteNumber("rolledBack", rolledBack);
+                        slimWriter.WriteNumber("committed", 0);
+                    }
                     slimWriter.WriteEndObject();
                     slimWriter.WriteEndObject();
                 }
@@ -1429,8 +1459,13 @@ static partial class CommandBuilder
         {
             for (int i = 0; i < results.Count; i++)
             {
-                var r = results[i];
+                var r = receipts[i];
                 var prefix = $"[{i + 1}] ";
+                if (r.Status == "rolled_back")
+                {
+                    @out.WriteLine($"{prefix}ROLLED BACK: {(string.IsNullOrEmpty(r.Output) ? "OK" : r.Output)}");
+                    continue;
+                }
                 if (r.Success)
                 {
                     if (!string.IsNullOrEmpty(r.Output))
@@ -1444,11 +1479,13 @@ static partial class CommandBuilder
                 }
             }
 
-            var succeeded = results.Count(r => r.Success);
-            var failed = results.Count - succeeded;
+            var succeeded = receipts.Count(r => r.Success);
+            var failed = results.Count(r => !r.Success);
             // FROZEN TEXT: the "Batch complete: N succeeded, M failed" skeleton
             // is a machine-consumed contract — extend by SUFFIX only.
-            var atomicNote = atomicRolledBack ? " (atomic: no changes were applied)" : "";
+            var atomicNote = atomicRolledBack
+                ? $" (atomic: {results.Count(r => r.Success)} rolled back, no changes were applied)"
+                : "";
             @out.WriteLine($"\nBatch complete: {succeeded} succeeded, {failed} failed, {results.Count} total{atomicNote}");
         }
     }

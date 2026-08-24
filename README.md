@@ -8,7 +8,7 @@ Open-source. Single binary. No Office installation. No dependencies. Works every
 
 **OfficeCLI's built-in HTML rendering engine reproduces documents with high fidelity — and that's what gives AI eyes.** It renders `.docx` / `.xlsx` / `.pptx` to HTML or PNG, closing the *render → look → fix* loop.
 
-[![GitHub Release](https://img.shields.io/github/v/release/iOfficeAI/OfficeCLI)](https://github.com/iOfficeAI/OfficeCLI/releases)
+[![GitHub Release](https://img.shields.io/github/v/release/astraclawteam/OfficeCLI)](https://github.com/astraclawteam/OfficeCLI/releases)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 
 **English** | [中文](README_zh.md) | [日本語](README_ja.md) | [한국어](README_ko.md)
@@ -76,7 +76,7 @@ That's it. The skill file teaches the agent how to install the binary and use al
 
 **Option A — GUI:** Install [**AionUi**](https://github.com/iOfficeAI/AionUi) — a desktop app that lets you create and edit Office documents through natural language, powered by OfficeCLI under the hood. Just describe what you want, and AionUi handles the rest.
 
-**Option B — CLI:** Download the binary for your platform from [GitHub Releases](https://github.com/iOfficeAI/OfficeCLI/releases), then run:
+**Option B — CLI:** Download the binary for your platform from [GitHub Releases](https://github.com/astraclawteam/OfficeCLI/releases), then run:
 
 ```bash
 officecli install
@@ -88,8 +88,8 @@ This copies the binary to your PATH and installs the **officecli skill** into ev
 
 ```bash
 # 1. Install (macOS / Linux) — or: brew install officecli / npm install -g @officecli/officecli
-curl -fsSL https://raw.githubusercontent.com/iOfficeAI/OfficeCLI/main/install.sh | bash
-# Windows (PowerShell): irm https://raw.githubusercontent.com/iOfficeAI/OfficeCLI/main/install.ps1 | iex
+curl -fsSL https://raw.githubusercontent.com/astraclawteam/OfficeCLI/main/install.sh | bash
+# Windows (PowerShell): irm https://raw.githubusercontent.com/astraclawteam/OfficeCLI/main/install.ps1 | iex
 
 # 2. Create a blank PowerPoint
 officecli create deck.pptx
@@ -207,10 +207,10 @@ Ships as a single self-contained binary. The .NET runtime is embedded -- nothing
 
 ```bash
 # macOS / Linux
-curl -fsSL https://raw.githubusercontent.com/iOfficeAI/OfficeCLI/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/astraclawteam/OfficeCLI/main/install.sh | bash
 
 # Windows (PowerShell)
-irm https://raw.githubusercontent.com/iOfficeAI/OfficeCLI/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/astraclawteam/OfficeCLI/main/install.ps1 | iex
 ```
 
 **Or via a package manager:**
@@ -226,7 +226,7 @@ scoop install officecli
 npm install -g @officecli/officecli
 ```
 
-**Or download manually** from [GitHub Releases](https://github.com/iOfficeAI/OfficeCLI/releases):
+**Or download manually** from [GitHub Releases](https://github.com/astraclawteam/OfficeCLI/releases):
 
 | Platform | Binary |
 |----------|--------|
@@ -652,7 +652,7 @@ Requires [.NET 10 SDK](https://dotnet.microsoft.com/download) for compilation on
 
 [Apache License 2.0](LICENSE)
 
-Bug reports and contributions are welcome on [GitHub Issues](https://github.com/iOfficeAI/OfficeCLI/issues).
+Bug reports and contributions for this maintained fork are welcome on [GitHub Issues](https://github.com/astraclawteam/OfficeCLI/issues).
 
 ---
 
@@ -673,8 +673,8 @@ yaml-frontmatter:
   mcp-server: true
   skill-file: SKILL.md
 
-  install-command-unix: curl -fsSL https://raw.githubusercontent.com/iOfficeAI/OfficeCLI/main/install.sh | bash
-  install-command-windows: irm https://raw.githubusercontent.com/iOfficeAI/OfficeCLI/main/install.ps1 | iex
+  install-command-unix: curl -fsSL https://raw.githubusercontent.com/astraclawteam/OfficeCLI/main/install.sh | bash
+  install-command-windows: irm https://raw.githubusercontent.com/astraclawteam/OfficeCLI/main/install.ps1 | iex
 -->
 
 <!-- LLM/agent discovery metadata
@@ -692,6 +692,6 @@ mcp-server: true
 skill-file: SKILL.md
 skill-file-lines: 403
 alternatives: python-docx, openpyxl, python-pptx, libreoffice --headless
-install-command-unix: curl -fsSL https://raw.githubusercontent.com/iOfficeAI/OfficeCLI/main/install.sh | bash
-install-command-windows: irm https://raw.githubusercontent.com/iOfficeAI/OfficeCLI/main/install.ps1 | iex
+install-command-unix: curl -fsSL https://raw.githubusercontent.com/astraclawteam/OfficeCLI/main/install.sh | bash
+install-command-windows: irm https://raw.githubusercontent.com/astraclawteam/OfficeCLI/main/install.ps1 | iex
 -->

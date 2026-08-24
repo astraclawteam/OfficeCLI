@@ -223,6 +223,21 @@ public class BatchResult
     public string? Code { get; set; }
     /// <summary>The original batch item, included when the command fails so the agent can inspect/retry.</summary>
     public BatchItem? Item { get; set; }
+    /// <summary>
+    /// The command itself completed successfully before an atomic batch was
+    /// rolled back. Null for ordinary (non-rollback) receipts.
+    /// </summary>
+    public bool? AttemptSucceeded { get; set; }
+    /// <summary>
+    /// Whether this result is present in the final document state. Null for
+    /// legacy/ordinary receipts; false for every executed item in a rolled-back
+    /// atomic batch.
+    /// </summary>
+    public bool? Committed { get; set; }
+    /// <summary>True when a successful item was undone by atomic rollback.</summary>
+    public bool? RolledBack { get; set; }
+    /// <summary>Machine-readable final status: rolled_back or failed.</summary>
+    public string? Status { get; set; }
 }
 
 /// <summary>
@@ -242,6 +257,10 @@ internal class BatchResultConverter : JsonConverter<BatchResult>
         if (root.TryGetProperty("error", out var err)) result.Error = err.GetString();
         if (root.TryGetProperty("code", out var cod)) result.Code = cod.GetString();
         if (root.TryGetProperty("item", out var itm)) result.Item = JsonSerializer.Deserialize(itm.GetRawText(), BatchJsonContext.Default.BatchItem);
+        if (root.TryGetProperty("attemptSucceeded", out var attempted)) result.AttemptSucceeded = attempted.GetBoolean();
+        if (root.TryGetProperty("committed", out var committed)) result.Committed = committed.GetBoolean();
+        if (root.TryGetProperty("rolledBack", out var rolledBack)) result.RolledBack = rolledBack.GetBoolean();
+        if (root.TryGetProperty("status", out var status)) result.Status = status.GetString();
         return result;
     }
 
@@ -275,6 +294,10 @@ internal class BatchResultConverter : JsonConverter<BatchResult>
                 JsonSerializer.Serialize(writer, value.Item, BatchJsonContext.Default.BatchItem);
             }
         }
+        if (value.AttemptSucceeded.HasValue) writer.WriteBoolean("attemptSucceeded", value.AttemptSucceeded.Value);
+        if (value.Committed.HasValue) writer.WriteBoolean("committed", value.Committed.Value);
+        if (value.RolledBack.HasValue) writer.WriteBoolean("rolledBack", value.RolledBack.Value);
+        if (value.Status != null) writer.WriteString("status", value.Status);
         writer.WriteEndObject();
     }
 
