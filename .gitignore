@@ -1,0 +1,19 @@
+# .NET build outputs
+**/bin/
+**/obj/
+
+# Test and coverage outputs
+TestResults/
+coverage/
+*.trx
+
+# Local IDE and OS state
+.vs/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Local OfficeCLI runtime state and generated documents
+.officecli/
+*.tmp
+~$*

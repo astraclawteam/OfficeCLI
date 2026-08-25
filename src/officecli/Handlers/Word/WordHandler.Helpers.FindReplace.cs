@@ -555,20 +555,19 @@ public partial class WordHandler
                     if (isRegex && matchObjs != null && i < matchObjs.Count)
                         effectiveReplace = matchObjs[i].Result(replace);
 
-                    // Cross-hyperlink replacement is still rejected — the wrapped
-                    // form would corrupt the URL/format-binding of the hyperlink
-                    // structure just as the unwrapped form did.
-                    {
-                        var affected = BuildRunTexts(para)
-                            .Where(rt => rt.End > matchStart && rt.Start < matchEnd)
-                            .Select(rt => rt.Run.Ancestors<Hyperlink>().FirstOrDefault())
-                            .Distinct()
-                            .ToList();
-                        if (affected.Count > 1)
-                            throw new ArgumentException(
-                                $"find/replace+revision cannot span a hyperlink boundary "
-                                + $"(match at offset {matchStart}, length {matchLen})");
-                    }
+                    // Matches contained by one hyperlink are legal: the run-level
+                    // w:del/w:ins wrappers stay inside w:hyperlink and preserve its
+                    // relationship. A plain↔link boundary match cannot be split
+                    // without changing link semantics, so reject it (#279).
+                    var affected = BuildRunTexts(para)
+                        .Where(rt => rt.End > matchStart && rt.Start < matchEnd)
+                        .Select(rt => rt.Run.Ancestors<Hyperlink>().FirstOrDefault())
+                        .Distinct()
+                        .ToList();
+                    if (affected.Count > 1)
+                        throw new ArgumentException(
+                            $"find/replace+revision cannot partially cross a hyperlink boundary "
+                            + $"(match at offset {matchStart}, length {matchLen}); narrow the pattern to text wholly inside or outside the link");
 
                     // Split the runs so the matched span is a contiguous list of
                     // sibling runs we can wrap individually.

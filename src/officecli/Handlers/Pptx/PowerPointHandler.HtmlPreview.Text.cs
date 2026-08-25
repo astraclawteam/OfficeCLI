@@ -551,7 +551,15 @@ public partial class PowerPointHandler
                         if (oMath != null)
                         {
                             var latex = FormulaParser.ToLatex(oMath);
-                            sb.Append($"<span class=\"katex-formula\" data-formula=\"{HtmlEncode(latex)}\"></span>");
+                            var display = oMath.LocalName == "oMathPara" ? "true" : "false";
+                            var mathSizeHundredths = para.Elements<Drawing.Run>()
+                                .Select(r => r.RunProperties?.FontSize?.Value)
+                                .FirstOrDefault(size => size.HasValue)
+                                ?? defaultFontSizeHundredths;
+                            var mathSize = mathSizeHundredths.HasValue
+                                ? $" style=\"font-size:{mathSizeHundredths.Value / 100.0 * fontScale:0.##}pt\""
+                                : "";
+                            sb.Append($"<span class=\"katex-formula\" data-display=\"{display}\" data-formula=\"{HtmlEncode(latex)}\"{mathSize}></span>");
                         }
                     }
                     catch { }
@@ -872,7 +880,10 @@ public partial class PowerPointHandler
             resolvedRunFont = runFont;
         }
         if (!string.IsNullOrEmpty(resolvedRunFont))
-            styles.Add(CssFontFamilyWithFallback(resolvedRunFont));
+        {
+            var runLanguage = rp?.Language?.Value ?? rp?.AlternativeLanguage?.Value;
+            styles.Add(CssFontFamilyWithFallback(resolvedRunFont, runLanguage));
+        }
 
         // Size — use explicit run size, fall back to inherited placeholder
         // default, else the real-PowerPoint plain-textbox default of 18pt.
@@ -1137,7 +1148,7 @@ public partial class PowerPointHandler
             // solidFill child (default black when absent). paint-order:stroke fill
             // keeps the fill painted on top so the stroke hugs the glyph outside.
             var runOutline = rp.GetFirstChild<Drawing.Outline>();
-            if (runOutline != null)
+            if (runOutline != null && runOutline.GetFirstChild<Drawing.NoFill>() == null)
             {
                 double strokePx = runOutline.Width?.HasValue == true
                     ? Units.EmuToPt(runOutline.Width.Value) * 4.0 / 3.0

@@ -212,13 +212,27 @@ public partial class PowerPointHandler
                 sb.Append($" style=\"{string.Join("", slideStyles)}\"");
             sb.AppendLine(">");
 
-            // Render slide elements + inherited layout placeholders
-            RenderLayoutPlaceholders(sb, slidePart, slideColors, slideNum);
-            RenderSlideElements(sb, slidePart, slideNum, slideWidthEmu, slideHeightEmu, slideColors);
+            // Render each slide as an isolation boundary. A malformed WPS shape
+            // must not blank the entire deck or terminate watch mode (#296).
+            // The next file change rebuilds the slide and naturally clears this
+            // placeholder once the source is valid again.
+            try
+            {
+                RenderLayoutPlaceholders(sb, slidePart, slideColors, slideNum);
+                RenderSlideElements(sb, slidePart, slideNum, slideWidthEmu, slideHeightEmu, slideColors);
+            }
+            catch (Exception ex) when (ex is FormatException or InvalidDataException or System.Xml.XmlException or OpenXmlPackageException)
+            {
+                sb.AppendLine($"<div class=\"slide-render-error\" data-render-error=\"true\" style=\"position:absolute;inset:8%;display:flex;align-items:center;justify-content:center;padding:24pt;border:2pt dashed #c44;background:#fff5f5;color:#7a1f1f;text-align:center;font:14pt sans-serif\">Slide {slideNum} could not be previewed: {HtmlEncode(ex.Message)}</div>");
+            }
 
             sb.AppendLine("    </div>");
             sb.AppendLine("  </div>");
-            RenderSpeakerNotes(sb, slidePart);
+            try { RenderSpeakerNotes(sb, slidePart); }
+            catch (Exception ex) when (ex is FormatException or InvalidDataException or System.Xml.XmlException or OpenXmlPackageException)
+            {
+                sb.AppendLine($"<div class=\"slide-notes render-error\">Notes unavailable: {HtmlEncode(ex.Message)}</div>");
+            }
             sb.AppendLine("</div>");
         }
 
@@ -269,7 +283,7 @@ public partial class PowerPointHandler
         }
         pending.forEach(function(el) {
             try {
-                katex.render(el.dataset.formula, el, { throwOnError: false, displayMode: true });
+                katex.render(el.dataset.formula, el, { throwOnError: false, displayMode: el.dataset.display === 'true' });
                 el.classList.add('katex-rendered');
             } catch(e) { el.textContent = el.dataset.formula + ' (Error: ' + e.message + '. See https://katex.org/docs/supported.html for supported syntax.)'; }
         });

@@ -40,6 +40,9 @@ public static class IssueSubtypes
     /// translucent runs, and colors carrying lumMod/shade transforms are
     /// skipped to keep false positives near zero. Format bucket, Warning.</summary>
     public const string LowContrast = "low_contrast";
+    /// <summary>pptx-only, opt-in: deterministic slide layout checks that
+    /// would be too opinionated for the default issue stream.</summary>
+    public const string PptLayout = "ppt_layout";
 
     /// <summary>Broad IssueType bucket names — the canonical surface shown
     /// in error messages and help. Single-letter aliases (<see cref="BucketAliases"/>)
@@ -63,7 +66,7 @@ public static class IssueSubtypes
     {
         FormulaNotEvaluated, FormulaCacheStale, FormulaRefMissingSheet, FormulaEvalError,
         FieldNotEvaluated, FieldCacheStale,
-        SlideFieldNotEvaluated, NotesUnresolvedRid, LowContrast,
+        SlideFieldNotEvaluated, NotesUnresolvedRid, LowContrast, PptLayout,
         ChartSeriesRefMissingSheet, ChartCacheStale,
         DefinedNameBroken, DefinedNameTargetMissing,
         BrokenPartRef,
@@ -72,7 +75,7 @@ public static class IssueSubtypes
     /// <summary>Subtypes that are scanned by default and surface under
     /// <c>--type content</c>. Opt-in subtypes (currently only
     /// <see cref="ChartCacheStale"/>) require an exact-name request.</summary>
-    public static readonly string[] OptInSubtypes = new[] { ChartCacheStale };
+    public static readonly string[] OptInSubtypes = new[] { ChartCacheStale, PptLayout };
 
     /// <summary>One-line summary suitable for the CLI <c>--type</c> help
     /// text. Generated from <see cref="ValidSubtypes"/> so the help cannot
@@ -88,7 +91,7 @@ public static class IssueSubtypes
             + "Opt-in only (request by exact name; not included in --type content): "
             + string.Join(", ", OptInSubtypes) + ". "
             + "Subtypes are format-specific — formula_* / chart_* / definedname_* apply to xlsx, "
-            + "field_* to docx, slide_field_* / notes_unresolved_rid / broken_part_ref / low_contrast to pptx; requesting a subtype that does not apply to "
+            + "field_* to docx, slide_field_* / notes_unresolved_rid / broken_part_ref / low_contrast / ppt_layout to pptx; requesting a subtype that does not apply to "
             + "the queried file returns count=0 (not an error). "
             + "All values are case-insensitive and surrounding whitespace is trimmed.";
     }

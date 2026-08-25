@@ -192,6 +192,9 @@ static partial class CommandBuilder
         rootCommand.Add(BuildImportCommand(jsonOption));
         rootCommand.Add(BuildCreateCommand(jsonOption));
         rootCommand.Add(BuildMergeCommand(jsonOption));
+        rootCommand.Add(BuildBrandExtractCommand(jsonOption));
+        rootCommand.Add(BuildFidelitySnapshotCommand(jsonOption));
+        rootCommand.Add(BuildFidelityDiffCommand(jsonOption));
         rootCommand.Add(BuildPluginsCommand(jsonOption));
 
         foreach (var stub in BuildIntegrationStubCommands())

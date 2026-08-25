@@ -244,7 +244,9 @@ officecli install    # explicit
 officecli            # bare invocation also triggers install
 ```
 
-Updates are checked automatically in the background. Disable with `officecli config autoUpdate false` or skip per-invocation with `OFFICECLI_SKIP_UPDATE=1`. Configuration lives under `~/.officecli/config.json`.
+Updates are checked automatically in the background. Disable with `officecli config autoUpdate false` or skip per-invocation with `OFFICECLI_SKIP_UPDATE=1`. On Windows, configuration lives under `~/.officecli/config.json`. On Linux/macOS, existing `~/.officecli` installs remain supported; new installs use `$XDG_CONFIG_HOME/officecli/config.json` or `~/.config/officecli/config.json`.
+
+OfficeCLI normally records its version and last-modified time in OOXML custom properties. Set `OFFICECLI_NO_FINGERPRINT=1` before editing when a deliverable must not contain that tool fingerprint.
 
 ## Key Features
 
@@ -598,7 +600,7 @@ officecli merge invoice-template.docx invoice-001.docx --data '{"client":"Acme",
 officecli validate report.docx && officecli view report.docx issues --json
 ```
 
-**From Python or Node.js** — install one of the thin resident-pipe SDKs (no per-call process spawn):
+**From Python** — install the thin resident-pipe SDK (no per-call process spawn):
 
 ```python
 # Python — `pip install officecli-sdk`
@@ -608,16 +610,7 @@ with officecli.create("deck.pptx") as doc:          # or officecli.open("deck.pp
     print(doc.send({"command": "get", "path": "/slide[1]"}))
 ```
 
-```javascript
-// Node.js — `npm install @officecli/sdk`
-const oc = require("@officecli/sdk");
-const doc = await oc.create("deck.pptx");            // or oc.open("deck.pptx")
-await doc.send({ command: "add", parent: "/", type: "slide" });
-console.log(await doc.send({ command: "get", path: "/slide[1]" }));
-await doc.close();
-```
-
-Both SDKs auto-provision the native CLI when missing (mirror-first, Windows-capable) and announce the install rather than doing it silently.
+The Python SDK auto-provisions the native CLI when missing (mirror-first, Windows-capable) and announces the install rather than doing it silently.
 
 Or wrap subprocess directly, one-shot:
 

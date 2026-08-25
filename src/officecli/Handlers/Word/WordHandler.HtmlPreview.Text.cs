@@ -915,6 +915,20 @@ public partial class WordHandler
             return;
         var style = GetRunInlineCss(rProps, para);
 
+        // Browsers do not reliably paint text-decoration under a run whose
+        // content consists only of regular preserved spaces. Word and WPS do:
+        // this is the conventional fill-in line used by forms and bid docs.
+        // Render direct (author-applied) whitespace-only underlines as a
+        // measured inline block with a bottom border. Inherited underline is
+        // handled separately below because Word suppresses that phantom rule.
+        var directWhitespaceUnderline = HasDirectUnderline(run)
+            && IsWhitespaceOnlyTextRun(run)
+            && !string.IsNullOrEmpty(style)
+            && style.Contains("text-decoration:underline", StringComparison.Ordinal);
+        var directWhitespaceUnderlineBorder = directWhitespaceUnderline
+            ? UnderlineBorderFromStyle(style)
+            : "";
+
         // Phantom-underline suppression: a run whose entire visible content is
         // whitespace (e.g. a 30-space spacer carrying a Heading2 style's
         // <w:u w:val="single"/>) draws NO underline in real Word. Strip the
@@ -1317,10 +1331,22 @@ public partial class WordHandler
                 sb.Append("&shy;");
             else if (child is Text t && !string.IsNullOrEmpty(t.Text))
             {
-                bool handled = false;
-                OnHtmlRenderText(sb, t.Text, rProps, style, ref handled);
-                if (!handled)
-                    sb.Append(HtmlEncode(t.Text));
+                if (directWhitespaceUnderline && string.IsNullOrWhiteSpace(t.Text))
+                {
+                    // A normal space is roughly 0.25em in the proportional
+                    // fonts Word commonly uses. Preserve the authored run's
+                    // advance width without inserting visible placeholder
+                    // glyphs or relying on browser-specific NBSP decoration.
+                    var widthEm = Math.Max(0.25, t.Text.Length * 0.25);
+                    sb.Append($"<span class=\"w-fill-line\" aria-hidden=\"true\" style=\"display:inline-block;width:{widthEm:0.##}em;{directWhitespaceUnderlineBorder}vertical-align:baseline\"></span>");
+                }
+                else
+                {
+                    bool handled = false;
+                    OnHtmlRenderText(sb, t.Text, rProps, style, ref handled);
+                    if (!handled)
+                        sb.Append(HtmlEncode(t.Text));
+                }
             }
             else if (child is SymbolChar sym)
             {

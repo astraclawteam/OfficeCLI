@@ -372,28 +372,25 @@ public partial class WordHandler
                 throw new InvalidOperationException(
                     "element already has a pending pPrChange; accept/reject existing first");
 
-            // Snapshot the pPr. The strongly-typed child class for the <w:pPr>
-            // inside <w:pPrChange> is ParagraphPropertiesExtended in
-            // DocumentFormat.OpenXml 3.x — NOT PreviousParagraphProperties
-            // (despite the parallel naming with PreviousRunProperties used by
-            // rPrChange). Confirmed empirically: writing PreviousParagraphProperties
-            // round-trips to ParagraphPropertiesExtended after save+reload,
-            // breaking strongly-typed reads. Use ParagraphPropertiesExtended on
-            // write so write and read see the same SDK type.
-            var previous = new ParagraphPropertiesExtended();
+            // Build the previous-state snapshot as a full CT_PPr first. Word
+            // writes paragraph-mark rPr in this snapshot, while OpenXml SDK 3.x
+            // re-types the same nested <w:pPr> as ParagraphPropertiesExtended
+            // after reload. Building against the full CT_PPr particle lets the
+            // shared schema-order helper place pStyle first and rPr near-last;
+            // assigning the resulting XML below preserves Word's lossless
+            // before-state without inheriting the SDK snapshot-model gap.
+            var previous = new ParagraphProperties();
             if (existingPPr != null)
             {
                 foreach (var child in existingPPr.ChildElements)
                 {
                     if (child is ParagraphPropertiesChange) continue;
-                    // The pPrChange snapshot is CT_PPrBase (ParagraphPropertiesExtended),
-                    // which does NOT allow the paragraph-mark <w:rPr> or <w:sectPr> —
-                    // those two live only in the full CT_PPr. Cloning them in makes the
-                    // snapshot schema-invalid ("invalid child element 'rPr'"). Paragraph-
-                    // mark run-property changes are tracked separately via
-                    // <w:pPr><w:rPr><w:rPrChange>, not inside pPrChange.
-                    if (child is ParagraphMarkRunProperties or SectionProperties) continue;
-                    previous.AppendChild(child.CloneNode(true));
+                    // sectPr is document layout state, not paragraph formatting,
+                    // and is tracked independently through sectPrChange.
+                    if (child is SectionProperties) continue;
+                    var clone = child.CloneNode(true);
+                    previous.AppendChild(clone);
+                    Core.SchemaOrder.Place(previous, clone);
                 }
             }
 
@@ -406,7 +403,11 @@ public partial class WordHandler
                     Date = date,
                     Id = idStr,
                 };
-                pprChange.AppendChild(previous);
+                // Do not AppendChild(previous): the SDK's declared child type for
+                // pPrChange is narrower than the structure emitted by Word. The
+                // raw snapshot is nevertheless valid WordprocessingML and keeps
+                // pStyle/rPr in the canonical CT_PPr order established above.
+                pprChange.InnerXml = previous.OuterXml;
                 if (!string.IsNullOrWhiteSpace(tcBeforeXml))
                     ApplyBeforeXmlSnapshot(pprChange, tcBeforeXml!);
                 // Schema CT_PPr places pPrChange last; AppendChild is correct.

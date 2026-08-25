@@ -3046,15 +3046,16 @@ public partial class PowerPointHandler
     /// Sanitize a value for use inside a CSS style attribute.
     /// Strips characters that could break out of the style context.
     /// </summary>
-    private static readonly string[] CjkFallbacks = { "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", "Hiragino Sans GB" };
-
-    private static string CssFontFamilyWithFallback(string font)
+    private static string CssFontFamilyWithFallback(string font, string? language = null)
     {
         var sanitized = CssSanitize(font);
-        var fallbacks = string.Join(",", CjkFallbacks
-            .Where(f => !f.Equals(font, StringComparison.OrdinalIgnoreCase))
-            .Select(f => $"'{f}'"));
-        return $"font-family:'{sanitized}',{fallbacks},sans-serif";
+        var locale = !string.IsNullOrWhiteSpace(language)
+            ? language
+            : LocaleFontRegistry.DetectLocaleFromCjkFontName(font);
+        var fallbacks = LocaleFontRegistry.GetCjkCssFallback(locale);
+        return string.IsNullOrEmpty(fallbacks)
+            ? $"font-family:'{sanitized}',sans-serif"
+            : $"font-family:'{sanitized}',{fallbacks},sans-serif";
     }
 
     /// <summary>

@@ -25,8 +25,21 @@ internal static class UpdateChecker
     // Resolved per-call rather than cached so tests can override $HOME between
     // cases without restarting the process. Production behavior is unchanged —
     // $HOME never moves under a running officecli invocation.
-    internal static string ConfigDir => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".officecli");
+    internal static string ConfigDir => ResolveConfigDir(
+        Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+        Environment.GetEnvironmentVariable("XDG_CONFIG_HOME"),
+        OperatingSystem.IsWindows());
+
+    internal static string ResolveConfigDir(string home, string? xdgConfigHome, bool isWindows)
+    {
+        var legacy = Path.Combine(home, ".officecli");
+        // Keep Windows and existing Unix installs byte-for-byte compatible.
+        if (isWindows || Directory.Exists(legacy)) return legacy;
+        var configHome = !string.IsNullOrWhiteSpace(xdgConfigHome)
+            ? xdgConfigHome
+            : Path.Combine(home, ".config");
+        return Path.Combine(configHome, "officecli");
+    }
     private static string ConfigPath => Path.Combine(ConfigDir, "config.json");
     // AstraClaw maintains its release line in an independent fork. Do not fall
     // back to the original project's mirror: it can legitimately publish a

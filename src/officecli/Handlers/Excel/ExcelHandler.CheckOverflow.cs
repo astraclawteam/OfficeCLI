@@ -135,17 +135,41 @@ public partial class ExcelHandler
         bool isMerged = ctx.MergeMap.TryGetValue(cellRef, out var mInfo);
         if (isMerged && !mInfo.IsAnchor) return null;
 
-        if (!TryGetCellAlignmentAndFont(cell, stylesheet, out var wrapText, out var fontSizePt))
+        if (!TryGetCellAlignmentAndFont(cell, stylesheet, out var wrapText, out var shrinkToFit, out var fontSizePt))
             return null;
-        if (!wrapText) return null;
-
-        var text = GetCellDisplayValue(cell);
+        var text = GetFormattedCellValue(cell, stylesheet);
         if (string.IsNullOrEmpty(text)) return null;
 
         var (startCol, startRow) = ParseCellReference(cellRef);
         int startColIdx = ColumnNameToIndex(startCol);
         int rowSpan = isMerged ? mInfo.RowSpan : 1;
         int colSpan = isMerged ? mInfo.ColSpan : 1;
+
+        // Numeric/date cells never spill into adjacent empty cells. Excel renders
+        // them as ### when the formatted display value does not fit (#301).
+        // Detect that independently of row-height wrapping, using the same glyph
+        // advance model as the HTML renderer. shrinkToFit is an explicit escape.
+        var dataType = cell.DataType?.Value;
+        var raw = cell.CellValue?.Text;
+        var numericOrDate = dataType == CellValues.Date
+            || ((dataType == null || dataType == CellValues.Number)
+                && double.TryParse(raw, System.Globalization.NumberStyles.Float,
+                    System.Globalization.CultureInfo.InvariantCulture, out _));
+        if (numericOrDate && !shrinkToFit)
+        {
+            double cellWidth = 0;
+            for (int c = startColIdx; c < startColIdx + colSpan; c++)
+                cellWidth += ctx.ColWidths.TryGetValue(c, out var w) ? w : ctx.DefaultColWidthPt;
+            var textWidth = text.Sum(ch => ParseHelpers.IsCjkOrFullWidth(ch) ? fontSizePt : fontSizePt * 0.62) + 3.0;
+            if (cellWidth > 0 && textWidth - cellWidth > 1.0)
+            {
+                var suggested = Math.Ceiling((textWidth + 3.0) / ColWidthCharToPt * 2.0) / 2.0;
+                return $"numeric overflow: '{text}' at {fontSizePt:F1}pt needs {textWidth:F1}pt, "
+                    + $"column width is {cellWidth:F1}pt. suggest.width={suggested:0.0}";
+            }
+        }
+
+        if (!wrapText) return null;
 
         // Non-merged cells with wrapText default to auto-fit — only flag when someone
         // explicitly pinned the row height (customHeight="1").
@@ -213,9 +237,10 @@ public partial class ExcelHandler
     }
 
     private static bool TryGetCellAlignmentAndFont(
-        Cell cell, Stylesheet? stylesheet, out bool wrapText, out double fontSizePt)
+        Cell cell, Stylesheet? stylesheet, out bool wrapText, out bool shrinkToFit, out double fontSizePt)
     {
         wrapText = false;
+        shrinkToFit = false;
         fontSizePt = 11.0; // Excel default body font
         if (stylesheet == null) return true;
 
@@ -227,6 +252,7 @@ public partial class ExcelHandler
         var xf = xfList[styleIndex];
 
         wrapText = xf.Alignment?.WrapText?.Value == true;
+        shrinkToFit = xf.Alignment?.ShrinkToFit?.Value == true;
 
         var fonts = stylesheet.Fonts;
         if (fonts != null)

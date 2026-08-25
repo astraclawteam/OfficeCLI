@@ -453,7 +453,9 @@ internal static class WordPdfBackend
     {
         var pdf = Path.Combine(Path.GetTempPath(), $"_w_{Guid.NewGuid():N}.pdf");
         var clsid = G_Word; var iid = G_IDispatch;
-        CoCreateInstance(ref clsid, IntPtr.Zero, 4, ref iid, out var word);
+        IntPtr word;
+        try { CoCreateInstance(ref clsid, IntPtr.Zero, 4, ref iid, out word); }
+        catch (Exception ex) { throw new NativeRenderException("Word", "activation", ex); }
         try
         {
             var name = (string?)DispGet(word, "Name") ?? "";
@@ -467,7 +469,9 @@ internal static class WordPdfBackend
             var docs = (IntPtr)DispGet(word, "Documents")!;
             try
             {
-                var doc = (IntPtr)DispMethod(docs, "Open", docx, MISSING, true, false)!;
+                IntPtr doc;
+                try { doc = (IntPtr)DispMethod(docs, "Open", docx, MISSING, true, false)!; }
+                catch (Exception ex) { throw new NativeRenderException("Word", "open", ex); }
                 try { DispMethod(doc, "SaveAs2", pdf, 17); }
                 finally { try { DispMethod(doc, "Close", false); } catch { } Marshal.Release(doc); }
             }
@@ -635,7 +639,7 @@ internal static class WordPdfBackend
         return result;
     }
 
-    public static byte[]? Render(string docx, string pageFilter, int timeoutMs = 60000)
+    public static byte[]? Render(string docx, string pageFilter, int timeoutMs = 60000, bool throwOnFailure = false)
     {
         byte[]? result = null;
         Exception? error = null;
@@ -660,8 +664,16 @@ internal static class WordPdfBackend
         th.SetApartmentState(ApartmentState.STA);
         th.IsBackground = true;
         th.Start();
-        if (!th.Join(timeoutMs + 30000)) return null;
-        if (error != null) return null;
+        if (!th.Join(timeoutMs + 30000))
+        {
+            if (throwOnFailure) throw new TimeoutException("Word native render timed out.");
+            return null;
+        }
+        if (error != null)
+        {
+            if (throwOnFailure) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(error).Throw();
+            return null;
+        }
         return result;
     }
 
@@ -674,9 +686,10 @@ internal static class WordPdfBackend
     /// failure — caller falls back to the HTML grid. cellW/cellH are the FINAL
     /// (already 1920-capped) cell size, so the stitched image needs no further cap.
     /// </summary>
-    public static byte[]? RenderGrid(string docx, string pageFilter, int cellW, int cellH, int cols, int gap, int pad, int timeoutMs = 60000)
+    public static byte[]? RenderGrid(string docx, string pageFilter, int cellW, int cellH, int cols, int gap, int pad, int timeoutMs = 60000, bool throwOnFailure = false)
     {
         byte[]? result = null;
+        Exception? error = null;
         var th = new Thread(() =>
         {
             string? pdf = null;
@@ -701,13 +714,19 @@ internal static class WordPdfBackend
                 }
                 finally { Marshal.Release(factory); }
             }
-            catch { result = null; }
+            catch (Exception ex) { error = ex; result = null; }
             finally { if (pdf != null) try { File.Delete(pdf); } catch { } }
         });
         th.SetApartmentState(ApartmentState.STA);
         th.IsBackground = true;
         th.Start();
-        if (!th.Join(timeoutMs + 30000)) return null;
+        if (!th.Join(timeoutMs + 30000))
+        {
+            if (throwOnFailure) throw new TimeoutException("Word native grid render timed out.");
+            return null;
+        }
+        if (error != null && throwOnFailure)
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(error).Throw();
         return result;
     }
 }

@@ -2215,7 +2215,8 @@ public partial class PowerPointHandler
             // set so a flipped elbow lands on the shape edges (the straight branch
             // already flips via svgX1/Y1/X2/Y2). flipH → x'=100-x, flipV → y'=100-y.
             points = MirrorConnectorPoints(points, flipH, flipV);
-            sb.AppendLine("      <svg width=\"100%\" height=\"100%\" viewBox=\"0 0 100 100\" preserveAspectRatio=\"none\" style=\"overflow:visible;display:block\">");
+            var frame = GetConnectorSvgFrame(points);
+            sb.AppendLine($"      <svg viewBox=\"{frame.ViewBox}\" preserveAspectRatio=\"none\" style=\"position:absolute;left:{N(frame.MinX)}%;top:{N(frame.MinY)}%;width:{N(frame.Width)}%;height:{N(frame.Height)}%;overflow:visible;display:block\">");
             if (!string.IsNullOrEmpty(markerDefs))
                 sb.AppendLine($"        {markerDefs}");
             sb.AppendLine($"        <polyline points=\"{points}\" {strokeAttrs}/>");
@@ -2284,6 +2285,31 @@ public partial class PowerPointHandler
             pairs[i] = $"{xy[0]},{xy[1]}";
         }
         return string.Join(' ', pairs);
+    }
+
+    /// <summary>
+    /// Expand the SVG viewport to include user-adjusted elbow points outside the
+    /// preset 0..100 box while keeping the connector's original coordinate scale.
+    /// A fixed viewBox clipped legal bentConnector4/5 adjustment values (#341).
+    /// </summary>
+    internal static (double MinX, double MinY, double Width, double Height, string ViewBox) GetConnectorSvgFrame(string points)
+    {
+        var ci = System.Globalization.CultureInfo.InvariantCulture;
+        var xs = new List<double> { 0, 100 };
+        var ys = new List<double> { 0, 100 };
+        foreach (var pair in points.Split(' ', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var xy = pair.Split(',');
+            if (xy.Length != 2) continue;
+            if (double.TryParse(xy[0], System.Globalization.NumberStyles.Float, ci, out var x)) xs.Add(x);
+            if (double.TryParse(xy[1], System.Globalization.NumberStyles.Float, ci, out var y)) ys.Add(y);
+        }
+        var minX = xs.Min(); var maxX = xs.Max();
+        var minY = ys.Min(); var maxY = ys.Max();
+        var width = Math.Max(0.01, maxX - minX);
+        var height = Math.Max(0.01, maxY - minY);
+        string N(double value) => value.ToString("0.##", ci);
+        return (minX, minY, width, height, $"{N(minX)} {N(minY)} {N(width)} {N(height)}");
     }
 
     // R27: mirror an SVG path "d" of the form "M x,y C/Q x,y x,y x,y" — the

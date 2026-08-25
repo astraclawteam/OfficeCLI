@@ -1,8 +1,8 @@
 name: Publish SDK (PyPI)
 
-# Publishes officecli-sdk (sdk/python) to PyPI on its OWN cadence — same model as
-# publish-sdk.yml for npm. Triggers on a push touching sdk/python/** (or manual
-# dispatch); a guard skips when that version is already on PyPI, so only a
+# Publishes officecli-sdk (sdk/python) to PyPI on its own cadence. Triggers on a
+# push touching sdk/python/** (or manual dispatch); a guard skips when that
+# version is already on PyPI, so only a
 # version bump in pyproject.toml actually publishes. A CLI release does NOT
 # republish the SDK.
 #

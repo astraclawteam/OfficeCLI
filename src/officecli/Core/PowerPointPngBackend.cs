@@ -27,7 +27,7 @@ internal static class PowerPointPngBackend
     /// at width×height pixels. A range is stitched top-to-bottom. Runs on a
     /// dedicated STA thread; returns null if the app is unavailable or any step
     /// fails or exceeds the timeout.
-    public static byte[]? Render(string pptx, int startSlide, int endSlide, int width, int height, int timeoutMs = 60000)
+    public static byte[]? Render(string pptx, int startSlide, int endSlide, int width, int height, int timeoutMs = 60000, bool throwOnFailure = false)
     {
         // Keep within the multi-image LLM ceiling, same 1920 long-edge cap as the HTML path.
         var m = Math.Max(width, height);
@@ -45,8 +45,16 @@ internal static class PowerPointPngBackend
         th.SetApartmentState(ApartmentState.STA);
         th.IsBackground = true;
         th.Start();
-        if (!th.Join(timeoutMs + 30000)) return null;
-        if (error != null) return null;
+        if (!th.Join(timeoutMs + 30000))
+        {
+            if (throwOnFailure) throw new TimeoutException("PowerPoint native render timed out.");
+            return null;
+        }
+        if (error != null)
+        {
+            if (throwOnFailure) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(error).Throw();
+            return null;
+        }
         return result;
     }
 
@@ -55,7 +63,7 @@ internal static class PowerPointPngBackend
     /// cellW×cellH and tiled with the given gap/padding (pixels) on a white
     /// background. Cells are scaled down if the composed image would exceed the
     /// 1920 long-edge ceiling. Returns null on failure.
-    public static byte[]? RenderGrid(string pptx, int startSlide, int endSlide, int cellW, int cellH, int cols, int gap, int pad, int timeoutMs = 120000)
+    public static byte[]? RenderGrid(string pptx, int startSlide, int endSlide, int cellW, int cellH, int cols, int gap, int pad, int timeoutMs = 120000, bool throwOnFailure = false)
     {
         byte[]? result = null;
         Exception? error = null;
@@ -69,8 +77,16 @@ internal static class PowerPointPngBackend
         th.SetApartmentState(ApartmentState.STA);
         th.IsBackground = true;
         th.Start();
-        if (!th.Join(timeoutMs + 30000)) return null;
-        if (error != null) return null;
+        if (!th.Join(timeoutMs + 30000))
+        {
+            if (throwOnFailure) throw new TimeoutException("PowerPoint native grid render timed out.");
+            return null;
+        }
+        if (error != null)
+        {
+            if (throwOnFailure) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(error).Throw();
+            return null;
+        }
         return result;
     }
 
@@ -78,7 +94,9 @@ internal static class PowerPointPngBackend
     {
         if (cols < 1) cols = 1;
         var clsid = G_App; var iid = WordPdfBackend.G_IDispatch;
-        WordPdfBackend.CoCreateInstance(ref clsid, IntPtr.Zero, 4, ref iid, out var app);
+        IntPtr app;
+        try { WordPdfBackend.CoCreateInstance(ref clsid, IntPtr.Zero, 4, ref iid, out app); }
+        catch (Exception ex) { throw new NativeRenderException("PowerPoint", "activation", ex); }
         try
         {
             var name = (string?)WordPdfBackend.DispGet(app, "Name") ?? "";
@@ -89,7 +107,9 @@ internal static class PowerPointPngBackend
             var presentations = (IntPtr)WordPdfBackend.DispGet(app, "Presentations")!;
             try
             {
-                var pres = (IntPtr)WordPdfBackend.DispMethod(presentations, "Open", Path.GetFullPath(pptx), -1, 0, 0)!;
+                IntPtr pres;
+                try { pres = (IntPtr)WordPdfBackend.DispMethod(presentations, "Open", Path.GetFullPath(pptx), -1, 0, 0)!; }
+                catch (Exception ex) { throw new NativeRenderException("PowerPoint", "open", ex); }
                 try
                 {
                     var slides = (IntPtr)WordPdfBackend.DispGet(pres, "Slides")!;
@@ -135,7 +155,9 @@ internal static class PowerPointPngBackend
     static byte[]? RenderCore(string pptx, int startSlide, int endSlide, int width, int height, int timeoutMs, List<string> tmp)
     {
         var clsid = G_App; var iid = WordPdfBackend.G_IDispatch;
-        WordPdfBackend.CoCreateInstance(ref clsid, IntPtr.Zero, 4, ref iid, out var app);
+        IntPtr app;
+        try { WordPdfBackend.CoCreateInstance(ref clsid, IntPtr.Zero, 4, ref iid, out app); }
+        catch (Exception ex) { throw new NativeRenderException("PowerPoint", "activation", ex); }
         try
         {
             var name = (string?)WordPdfBackend.DispGet(app, "Name") ?? "";
@@ -147,7 +169,9 @@ internal static class PowerPointPngBackend
             try
             {
                 // Open(FileName, ReadOnly=-1, Untitled=0, WithWindow=0): read-only, no window.
-                var pres = (IntPtr)WordPdfBackend.DispMethod(presentations, "Open", Path.GetFullPath(pptx), -1, 0, 0)!;
+                IntPtr pres;
+                try { pres = (IntPtr)WordPdfBackend.DispMethod(presentations, "Open", Path.GetFullPath(pptx), -1, 0, 0)!; }
+                catch (Exception ex) { throw new NativeRenderException("PowerPoint", "open", ex); }
                 try
                 {
                     var slides = (IntPtr)WordPdfBackend.DispGet(pres, "Slides")!;

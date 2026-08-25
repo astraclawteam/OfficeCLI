@@ -31,6 +31,12 @@ internal static class OfficeCliMetadata
     /// <summary>Bare product name, written to <c>dc:creator</c> and <c>cp:lastModifiedBy</c>.</summary>
     public static string CreatorName => ProductName;
 
+    internal static bool FingerprintDisabled(string? value)
+        => value?.Trim().ToLowerInvariant() is "1" or "true" or "yes" or "on";
+
+    private static bool FingerprintDisabled()
+        => FingerprintDisabled(Environment.GetEnvironmentVariable("OFFICECLI_NO_FINGERPRINT"));
+
     private static string ResolveVersion()
     {
         var asm = typeof(OfficeCliMetadata).Assembly;
@@ -167,7 +173,7 @@ internal static class OfficeCliMetadata
             part.Properties.Save();
         }
 
-        WriteCustomProperties(doc, nowUtc);
+        if (!FingerprintDisabled()) WriteCustomProperties(doc, nowUtc);
     }
 
     /// <summary>
@@ -179,7 +185,7 @@ internal static class OfficeCliMetadata
     /// </summary>
     public static void StampOnSave(OpenXmlPackage doc)
     {
-        WriteCustomProperties(doc, DateTime.UtcNow);
+        if (!FingerprintDisabled()) WriteCustomProperties(doc, DateTime.UtcNow);
     }
 
     private const string CustomPropsFmtId = "{D5CDD505-2E9C-101B-9397-08002B2CF9AE}";

@@ -17,6 +17,7 @@ public partial class ExcelHandler
     public string? Remove(string path, Dictionary<string, string>? properties = null)
     {
         // Phase 4: trackChange.* is Word-only. Silently ignored here.
+        var modifiedBeforeCall = Modified;
         Modified = true;
         // CONSISTENCY(container-remove-guard): reject removal of the
         // workbook root up front. Sheet-level removal has its own guard
@@ -259,6 +260,25 @@ public partial class ExcelHandler
             var removedSheetIndex = (uint)sheets.Elements<Sheet>()
                 .TakeWhile(s => !ReferenceEquals(s, sheet)).Count();
 
+            // Validate all defined-name consumers before mutating the package.
+            // The old order deleted the worksheet part first and only then
+            // discovered a formula that depended on an about-to-be-removed
+            // name. The command threw, but Dispose could still commit the
+            // partially mutated workbook. Preflight keeps every failure
+            // side-effect-free.
+            var workbook = GetWorkbook();
+            var definedNames = workbook.GetFirstChild<DefinedNames>();
+            try
+            {
+                PreflightDefinedNamesForSheetRemoval(
+                    workbookPart, sheetWsPartForCheck, sheetName, removedSheetIndex, definedNames);
+            }
+            catch
+            {
+                Modified = modifiedBeforeCall;
+                throw;
+            }
+
             var relId = sheet.Id?.Value;
             var sheetWsPart = relId != null
                 ? workbookPart.GetPartById(relId) as WorksheetPart
@@ -302,48 +322,12 @@ public partial class ExcelHandler
             // sheets, dropping them silently leaves those formulas with #NAME?.
             // Mirror the DV / sparkline / pivot guards: throw if any other-sheet
             // formula uses one of the about-to-be-orphaned names.
-            var workbook = GetWorkbook();
-            var definedNames = workbook.GetFirstChild<DefinedNames>();
             if (definedNames != null)
             {
-                var orphanNames = definedNames.Elements<DefinedName>()
-                    .Where(dn => dn.Text?.Contains(sheetName + "!", StringComparison.OrdinalIgnoreCase) == true)
-                    .Select(dn => dn.Name?.Value)
-                    .Where(n => !string.IsNullOrEmpty(n))
-                    .ToList();
-                if (orphanNames.Count > 0)
-                {
-                    var refs = new List<string>();
-                    foreach (var otherWsPart in workbookPart.WorksheetParts)
-                    {
-                        if (sheetWsPartForCheck != null && ReferenceEquals(otherWsPart, sheetWsPartForCheck)) continue;
-                        var otherSheetName = workbook.Sheets!.Elements<Sheet>()
-                            .FirstOrDefault(s => s.Id?.Value == workbookPart.GetIdOfPart(otherWsPart))?.Name?.Value ?? "?";
-                        if (otherWsPart.Worksheet is null) continue;
-                        foreach (var fcell in otherWsPart.Worksheet.Descendants<DocumentFormat.OpenXml.Spreadsheet.Cell>())
-                        {
-                            var f = fcell.CellFormula?.Text;
-                            if (string.IsNullOrEmpty(f)) continue;
-                            foreach (var n in orphanNames)
-                            {
-                                if (Regex.IsMatch(f, @"\b" + Regex.Escape(n!) + @"\b", RegexOptions.IgnoreCase))
-                                {
-                                    refs.Add($"{otherSheetName}!{fcell.CellReference?.Value ?? "?"} (uses '{n}')");
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                    if (refs.Count > 0)
-                        throw new ArgumentException(
-                            $"Cannot remove sheet '{sheetName}': defined name(s) [{string.Join(", ", orphanNames)}] " +
-                            $"are referenced by formulas in {string.Join(", ", refs)}. " +
-                            $"Remove or repoint the formulas first.");
-                }
-
                 // No external usage — safe to drop the orphan names.
                 var toRemove = definedNames.Elements<DefinedName>()
-                    .Where(dn => dn.Text?.Contains(sheetName + "!", StringComparison.OrdinalIgnoreCase) == true)
+                    .Where(dn => dn.LocalSheetId?.Value == removedSheetIndex
+                        || DefinedNameTargetsSheet(dn.Text, sheetName))
                     .ToList();
                 foreach (var dn in toRemove) dn.Remove();
 
@@ -1006,6 +990,61 @@ public partial class ExcelHandler
         DeleteCalcChainIfPresent();
         SaveWorksheet(worksheet);
         return null;
+    }
+
+    private static void PreflightDefinedNamesForSheetRemoval(
+        WorkbookPart workbookPart,
+        WorksheetPart? removedWorksheetPart,
+        string sheetName,
+        uint removedSheetIndex,
+        DefinedNames? definedNames)
+    {
+        if (definedNames == null) return;
+
+        var orphanNames = definedNames.Elements<DefinedName>()
+            .Where(dn => dn.LocalSheetId?.Value == removedSheetIndex
+                || DefinedNameTargetsSheet(dn.Text, sheetName))
+            .Select(dn => dn.Name?.Value)
+            .Where(n => !string.IsNullOrWhiteSpace(n))
+            .Cast<string>()
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        if (orphanNames.Count == 0) return;
+
+        var refs = new List<string>();
+        var workbookSheets = workbookPart.Workbook?.Sheets?.Elements<Sheet>()
+            ?? Enumerable.Empty<Sheet>();
+        foreach (var otherWorksheetPart in workbookPart.WorksheetParts)
+        {
+            if (removedWorksheetPart != null && ReferenceEquals(otherWorksheetPart, removedWorksheetPart)) continue;
+            var otherSheetName = workbookSheets
+                .FirstOrDefault(s => s.Id?.Value == workbookPart.GetIdOfPart(otherWorksheetPart))?.Name?.Value ?? "?";
+            if (otherWorksheetPart.Worksheet is null) continue;
+            foreach (var formulaCell in otherWorksheetPart.Worksheet.Descendants<Cell>())
+            {
+                var formula = formulaCell.CellFormula?.Text;
+                if (string.IsNullOrEmpty(formula)) continue;
+                foreach (var name in orphanNames)
+                {
+                    if (!Regex.IsMatch(formula, @"\b" + Regex.Escape(name) + @"\b", RegexOptions.IgnoreCase)) continue;
+                    refs.Add($"{otherSheetName}!{formulaCell.CellReference?.Value ?? "?"} (uses '{name}')");
+                    break;
+                }
+            }
+        }
+        if (refs.Count > 0)
+            throw new ArgumentException(
+                $"Cannot remove sheet '{sheetName}': defined name(s) [{string.Join(", ", orphanNames)}] " +
+                $"are referenced by formulas in {string.Join(", ", refs)}. Remove or repoint the formulas first.");
+    }
+
+    private static bool DefinedNameTargetsSheet(string? reference, string sheetName)
+    {
+        if (string.IsNullOrWhiteSpace(reference)) return false;
+        var bare = sheetName + "!";
+        var quoted = "'" + sheetName.Replace("'", "''", StringComparison.Ordinal) + "'!";
+        return reference.Contains(bare, StringComparison.OrdinalIgnoreCase)
+            || reference.Contains(quoted, StringComparison.OrdinalIgnoreCase);
     }
 
     // Referencing-slicer guard — a slicer cache names its pivot table via

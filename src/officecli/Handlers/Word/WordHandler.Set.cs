@@ -1123,6 +1123,8 @@ public partial class WordHandler
     private bool ApplyParagraphLevelProperty(ParagraphProperties pProps, string key, string? value, List<string>? warnings = null)
     {
         if (value is null) return false;
+        if (IsInheritanceClearValue(value))
+            return ClearParagraphFormattingProperty(pProps, key);
         switch (key.ToLowerInvariant())
         {
             case "style" or "styleid":
@@ -1498,6 +1500,106 @@ public partial class WordHandler
                 return true;
             default:
                 return false;
+        }
+    }
+
+    /// <summary>Remove an explicit paragraph property so style/default
+    /// inheritance becomes authoritative again. "inherit" and "unset" are
+    /// semantic clear operations; false/none remain explicit overrides.</summary>
+    private static bool ClearParagraphFormattingProperty(ParagraphProperties pProps, string key)
+    {
+        static void RemoveIfEmpty(OpenXmlElement? element)
+        {
+            if (element != null && element.GetAttributes().Count == 0 && !element.HasChildren)
+                element.Remove();
+        }
+
+        var k = key.ToLowerInvariant();
+        switch (k)
+        {
+            case "style" or "styleid" or "stylename": pProps.ParagraphStyleId = null; return true;
+            case "align" or "alignment" or "jc": pProps.Justification = null; return true;
+            case "firstlineindent":
+                if (pProps.Indentation is { } fl) { fl.FirstLine = null; RemoveIfEmpty(fl); }
+                return true;
+            case "leftindent" or "indentleft" or "indent":
+                if (pProps.Indentation is { } li) { li.Left = null; RemoveIfEmpty(li); }
+                return true;
+            case "rightindent" or "indentright":
+                if (pProps.Indentation is { } ri) { ri.Right = null; RemoveIfEmpty(ri); }
+                return true;
+            case "hangingindent" or "hanging":
+                if (pProps.Indentation is { } hi) { hi.Hanging = null; RemoveIfEmpty(hi); }
+                return true;
+            case "firstlinechars":
+                if (pProps.Indentation is { } flc) { flc.FirstLineChars = null; RemoveIfEmpty(flc); }
+                return true;
+            case "leftchars" or "startchars":
+                if (pProps.Indentation is { } lc) { lc.LeftChars = null; RemoveIfEmpty(lc); }
+                return true;
+            case "rightchars" or "endchars":
+                if (pProps.Indentation is { } rc) { rc.RightChars = null; RemoveIfEmpty(rc); }
+                return true;
+            case "hangingchars":
+                if (pProps.Indentation is { } hc) { hc.HangingChars = null; RemoveIfEmpty(hc); }
+                return true;
+            case "keepnext" or "keepwithnext": pProps.KeepNext = null; return true;
+            case "keeplines" or "keeptogether": pProps.KeepLines = null; return true;
+            case "pagebreakbefore" or "break": pProps.PageBreakBefore = null; return true;
+            case "widowcontrol" or "widoworphan": pProps.WidowControl = null; return true;
+            case "contextualspacing": pProps.ContextualSpacing = null; return true;
+            case "outlinelvl" or "outlinelevel": pProps.OutlineLevel = null; return true;
+            case "textalignment": pProps.TextAlignment = null; return true;
+            case "wordwrap": pProps.WordWrap = null; return true;
+            case "textboxtightwrap": pProps.TextBoxTightWrap = null; return true;
+            case "kinsoku": pProps.Kinsoku = null; return true;
+            case "overflowpunct": pProps.OverflowPunctuation = null; return true;
+            case "toplinepunct": pProps.TopLinePunctuation = null; return true;
+            case "autospacede": pProps.AutoSpaceDE = null; return true;
+            case "autospacedn": pProps.AutoSpaceDN = null; return true;
+            case "adjustrightind": pProps.AdjustRightIndent = null; return true;
+            case "snaptogrid": pProps.SnapToGrid = null; return true;
+            case "mirrorindents": pProps.MirrorIndents = null; return true;
+            case "suppressoverlap": pProps.SuppressOverlap = null; return true;
+            case "suppressautohyphens": pProps.SuppressAutoHyphens = null; return true;
+            case "suppresslinenumbers": pProps.SuppressLineNumbers = null; return true;
+            case "shading" or "shd" or "fill": pProps.Shading = null; return true;
+            case "spacebefore":
+                if (pProps.SpacingBetweenLines is { } sb) { sb.Before = null; RemoveIfEmpty(sb); }
+                return true;
+            case "spaceafter":
+                if (pProps.SpacingBetweenLines is { } sa) { sa.After = null; RemoveIfEmpty(sa); }
+                return true;
+            case "spacebeforelines":
+                if (pProps.SpacingBetweenLines is { } sbl) { sbl.BeforeLines = null; RemoveIfEmpty(sbl); }
+                return true;
+            case "spaceafterlines":
+                if (pProps.SpacingBetweenLines is { } sal) { sal.AfterLines = null; RemoveIfEmpty(sal); }
+                return true;
+            case "spacebeforeauto" or "beforeautospacing":
+                if (pProps.SpacingBetweenLines is { } sba) { sba.BeforeAutoSpacing = null; RemoveIfEmpty(sba); }
+                return true;
+            case "spaceafterauto" or "afterautospacing":
+                if (pProps.SpacingBetweenLines is { } saa) { saa.AfterAutoSpacing = null; RemoveIfEmpty(saa); }
+                return true;
+            case "linespacing":
+                if (pProps.SpacingBetweenLines is { } sl) { sl.Line = null; sl.LineRule = null; RemoveIfEmpty(sl); }
+                return true;
+            case "linerule" or "linespacingrule":
+                if (pProps.SpacingBetweenLines is { } sr) { sr.LineRule = null; RemoveIfEmpty(sr); }
+                return true;
+            case "numid":
+                if (pProps.NumberingProperties is { } np) { np.NumberingId = null; RemoveIfEmpty(np); }
+                return true;
+            case "numlevel" or "ilvl" or "listlevel":
+                if (pProps.NumberingProperties is { } nl) { nl.NumberingLevelReference = null; RemoveIfEmpty(nl); }
+                return true;
+            case "pbdr.top" or "pbdr.bottom" or "pbdr.left" or "pbdr.right" or "pbdr.between" or "pbdr.bar" or "pbdr.all" or "pbdr"
+                or "border.all" or "border" or "border.top" or "border.bottom" or "border.left" or "border.right" or "border.between" or "border.bar"
+                or "border.color" or "border.sz" or "border.size" or "border.space" or "border.val" or "border.style":
+                pProps.ParagraphBorders = null; return true;
+            case "direction" or "dir" or "bidi": pProps.BiDi = null; return true;
+            default: return false;
         }
     }
 

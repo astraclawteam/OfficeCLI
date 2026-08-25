@@ -572,6 +572,8 @@ public partial class WordHandler
     private static bool ApplyRunFormatting(OpenXmlCompositeElement props, string key, string? value)
     {
         if (value is null) return false;
+        if (IsInheritanceClearValue(value))
+            return ClearRunFormattingProperty(props, key);
         switch (key.ToLowerInvariant())
         {
             case "size":
@@ -1221,6 +1223,80 @@ public partial class WordHandler
             default:
                 return false;
         }
+    }
+
+    private static bool IsInheritanceClearValue(string value) =>
+        value.Equals("inherit", StringComparison.OrdinalIgnoreCase)
+        || value.Equals("unset", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Remove the explicit OOXML property so the run/paragraph mark inherits
+    /// from its character style, paragraph style, or document defaults. This is
+    /// deliberately distinct from false/none, which are explicit overrides.
+    /// </summary>
+    private static bool ClearRunFormattingProperty(OpenXmlCompositeElement props, string key)
+    {
+        void Remove<T>() where T : OpenXmlElement => props.RemoveAllChildren<T>();
+        var k = key.ToLowerInvariant();
+        switch (k)
+        {
+            case "size" or "fontsize" or "font.size": Remove<FontSize>(); return true;
+            case "size.cs" or "font.size.cs" or "sizecs": Remove<FontSizeComplexScript>(); return true;
+            case "bold" or "font.bold": Remove<Bold>(); return true;
+            case "bold.cs" or "font.bold.cs" or "boldcs": Remove<BoldComplexScript>(); return true;
+            case "italic" or "font.italic": Remove<Italic>(); return true;
+            case "italic.cs" or "font.italic.cs" or "italiccs": Remove<ItalicComplexScript>(); return true;
+            case "color" or "font.color": Remove<Color>(); return true;
+            case "highlight": Remove<Highlight>(); return true;
+            case "underline" or "font.underline" or "underline.color" or "underlinecolor" or "font.underline.color":
+                Remove<Underline>(); return true;
+            case "strike" or "strikethrough" or "font.strike" or "font.strikethrough": Remove<Strike>(); return true;
+            case "dstrike": Remove<DoubleStrike>(); return true;
+            case "outline": Remove<Outline>(); return true;
+            case "shadow": Remove<Shadow>(); return true;
+            case "emboss": Remove<Emboss>(); return true;
+            case "imprint": Remove<Imprint>(); return true;
+            case "noproof": Remove<NoProof>(); return true;
+            case "rtl" or "direction" or "dir": Remove<RightToLeftText>(); return true;
+            case "charspacing" or "letterspacing" or "spacing": Remove<Spacing>(); return true;
+            case "shading" or "shd" or "fill": Remove<Shading>(); return true;
+            case "rstyle": Remove<RunStyle>(); return true;
+            case "w" or "charscale": Remove<CharacterScale>(); return true;
+            case "superscript" or "subscript" or "vertalign": Remove<VerticalTextAlignment>(); return true;
+            case "caps" or "allcaps": Remove<Caps>(); return true;
+            case "smallcaps": Remove<SmallCaps>(); return true;
+            case "vanish": Remove<Vanish>(); return true;
+            case "specvanish": Remove<SpecVanish>(); return true;
+            case "bdr": Remove<Border>(); return true;
+            case "kern": Remove<Kern>(); return true;
+            case "position": Remove<Position>(); return true;
+            case "lang" or "lang.latin" or "lang.val" or "lang.ea" or "lang.eastasia" or "lang.eastasian"
+                or "lang.cs" or "lang.complexscript" or "lang.bidi":
+                Remove<Languages>(); return true;
+            case "font" or "font.name": Remove<RunFonts>(); return true;
+            case "font.latin": return ClearRunFontSlots(props, rf => { rf.Ascii = null; rf.HighAnsi = null; });
+            case "font.ascii": return ClearRunFontSlots(props, rf => rf.Ascii = null);
+            case "font.hansi": return ClearRunFontSlots(props, rf => rf.HighAnsi = null);
+            case "font.ea" or "font.eastasia" or "font.eastasian": return ClearRunFontSlots(props, rf => rf.EastAsia = null);
+            case "font.cs" or "font.complexscript" or "font.complex": return ClearRunFontSlots(props, rf => rf.ComplexScript = null);
+            case "font.hint": return ClearRunFontSlots(props, rf => rf.Hint = null);
+            case "font.asciitheme": return ClearRunFontSlots(props, rf => rf.AsciiTheme = null);
+            case "font.hansitheme": return ClearRunFontSlots(props, rf => rf.HighAnsiTheme = null);
+            case "font.eatheme" or "font.eastasiatheme": return ClearRunFontSlots(props, rf => rf.EastAsiaTheme = null);
+            case "font.cstheme": return ClearRunFontSlots(props, rf => rf.ComplexScriptTheme = null);
+            default: return false;
+        }
+    }
+
+    private static bool ClearRunFontSlots(OpenXmlCompositeElement props, Action<RunFonts> clear)
+    {
+        var fonts = props.GetFirstChild<RunFonts>();
+        if (fonts != null)
+        {
+            clear(fonts);
+            if (RunFontsIsEmpty(fonts)) fonts.Remove();
+        }
+        return true;
     }
 
     /// <summary>

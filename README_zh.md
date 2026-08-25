@@ -241,7 +241,9 @@ officecli install    # 显式安装
 officecli            # 直接运行也会触发安装
 ```
 
-OfficeCLI 会在后台自动检查更新。通过 `officecli config autoUpdate false` 关闭，或通过 `OFFICECLI_SKIP_UPDATE=1` 跳过单次检查。配置文件位于 `~/.officecli/config.json`。
+OfficeCLI 会在后台自动检查更新。通过 `officecli config autoUpdate false` 关闭，或通过 `OFFICECLI_SKIP_UPDATE=1` 跳过单次检查。Windows 配置文件位于 `~/.officecli/config.json`；Linux/macOS 会继续兼容已有的 `~/.officecli`，新安装使用 `$XDG_CONFIG_HOME/officecli/config.json` 或 `~/.config/officecli/config.json`。
+
+OfficeCLI 默认会在 OOXML 自定义属性中记录版本和最后修改时间。若交付文件不应携带该工具标识，请在编辑前设置 `OFFICECLI_NO_FINGERPRINT=1`。
 
 ## 核心功能
 

@@ -42,7 +42,7 @@ public partial class ExcelHandler
     {
         if (cell.DataType?.Value == CellValues.InlineString)
         {
-            return cell.InlineString?.InnerText ?? "";
+            return GetVisibleSpreadsheetText(cell.InlineString);
         }
 
         var value = cell.CellValue?.Text ?? "";
@@ -53,7 +53,7 @@ public partial class ExcelHandler
             if (sst?.SharedStringTable != null && int.TryParse(value, out int idx))
             {
                 var item = sst.SharedStringTable.Elements<SharedStringItem>().ElementAtOrDefault(idx);
-                return item?.InnerText ?? value;
+                return item == null ? value : GetVisibleSpreadsheetText(item);
             }
         }
 
@@ -112,6 +112,40 @@ public partial class ExcelHandler
         }
 
         return value;
+    }
+
+    /// <summary>
+    /// Return the ordinary cell text from an inline/shared-string container.
+    /// Spreadsheet phonetic guides live in sibling <c>rPh</c> elements and are
+    /// annotations, not additional cell value text. <c>OpenXmlElement.InnerText</c>
+    /// concatenates them with the base value, which made HTML/text readback
+    /// silently change Japanese and CJK content (issue #343).
+    /// </summary>
+    internal static string GetVisibleSpreadsheetText(OpenXmlCompositeElement? container)
+    {
+        if (container == null) return "";
+
+        var result = new System.Text.StringBuilder();
+        foreach (var child in container.ChildElements)
+        {
+            switch (child)
+            {
+                case Text text:
+                    result.Append(text.Text);
+                    break;
+                case Run run:
+                    foreach (var runText in run.Descendants<Text>())
+                        result.Append(runText.Text);
+                    break;
+                // PhoneticRun (rPh) and PhoneticProperties describe ruby-style
+                // guides. They remain available through structured readback but
+                // must never be merged into the visible cell value.
+                case PhoneticRun:
+                case PhoneticProperties:
+                    break;
+            }
+        }
+        return result.ToString();
     }
 
     /// <summary>

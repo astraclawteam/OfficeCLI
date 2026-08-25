@@ -424,7 +424,23 @@ public partial class ExcelHandler : IDocumentHandler, Rendering.IRenderModelHost
         // mid-session therefore reported schema-sequence errors on documents
         // that were perfectly fine once saved. Flush first, same as Save().
         FlushDirtyParts();
-        return RawXmlHelper.ValidateDocument(_doc, _filePath);
+        var errors = RawXmlHelper.ValidateDocument(_doc, _filePath);
+        var workbook = _doc.WorkbookPart?.Workbook;
+        var sheets = workbook?.Sheets?.Elements<Sheet>().ToList() ?? new List<Sheet>();
+        foreach (var dn in workbook?.DefinedNames?.Elements<DefinedName>() ?? Enumerable.Empty<DefinedName>())
+        {
+            var localSheetId = dn.LocalSheetId?.Value;
+            if (localSheetId.HasValue && localSheetId.Value >= sheets.Count)
+            {
+                var name = dn.Name?.Value ?? "(unnamed)";
+                errors.Add(new ValidationError(
+                    "Semantic",
+                    $"Defined name '{name}' has out-of-range localSheetId={localSheetId.Value}; workbook has {sheets.Count} sheet(s).",
+                    $"/namedrange[{name}]",
+                    "/xl/workbook.xml"));
+            }
+        }
+        return errors;
     }
 
     public void Save()

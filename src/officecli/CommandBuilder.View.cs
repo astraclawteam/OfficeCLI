@@ -9,6 +9,25 @@ namespace OfficeCli;
 
 static partial class CommandBuilder
 {
+    internal static CliException NativeRenderCliException(string applicationName, Exception? error)
+    {
+        var native = error as NativeRenderException;
+        if (native?.Stage == "activation" || error == null)
+            return new CliException($"--render native requires Windows with Microsoft {applicationName} installed and available.")
+            { Code = "native_app_unavailable", Suggestion = "Use --render html or --render auto." };
+
+        var hr = error.HResult == 0 ? "" : $" (HRESULT 0x{unchecked((uint)error.HResult):X8})";
+        var stage = native?.Stage ?? "render";
+        var code = stage == "open" ? "native_open_failed" : "native_render_failed";
+        return new CliException($"Microsoft {applicationName} native {stage} failed{hr}: {error.Message}")
+        {
+            Code = code,
+            Suggestion = stage == "open"
+                ? "Check that the document is readable in Microsoft Office, or use --render html."
+                : "Retry, or use --render html/--render auto."
+        };
+    }
+
     private static Command BuildViewCommand(Option<bool> jsonOption)
     {
         var viewFileArg = new Argument<FileInfo>("file") { Description = "Office document path (.docx, .xlsx, .pptx)" };
@@ -260,6 +279,7 @@ static partial class CommandBuilder
                             ? Math.Max(1, (int)Math.Round(screenshotWidth * (double)nativeH / nativeW))
                             : screenshotHeight;
                     }
+                    Exception? nativeRenderError = null;
                     if (renderMode != "html" && OperatingSystem.IsWindows())
                     {
                         try
@@ -269,18 +289,17 @@ static partial class CommandBuilder
                                 const int gap = 12, pad = 12;
                                 int cellW = Math.Max(1, (int)Math.Round((screenshotWidth - 2 * pad - (gridColsResolved - 1) * gap) / (double)gridColsResolved));
                                 int cellH = Math.Max(1, (int)Math.Round(cellW * (double)nativeH / nativeW));
-                                directPng = OfficeCli.Core.PowerPointPngBackend.RenderGrid(file.FullName, pStart ?? 1, pEnd ?? pptHandler.GetSlideCount(), cellW, cellH, gridColsResolved, gap, pad);
+                                directPng = OfficeCli.Core.PowerPointPngBackend.RenderGrid(file.FullName, pStart ?? 1, pEnd ?? pptHandler.GetSlideCount(), cellW, cellH, gridColsResolved, gap, pad, throwOnFailure: renderMode == "native");
                             }
                             else
                             {
-                                directPng = OfficeCli.Core.PowerPointPngBackend.Render(file.FullName, pStart ?? 1, pEnd ?? pStart ?? 1, exportW, exportH);
+                                directPng = OfficeCli.Core.PowerPointPngBackend.Render(file.FullName, pStart ?? 1, pEnd ?? pStart ?? 1, exportW, exportH, throwOnFailure: renderMode == "native");
                             }
                         }
-                        catch { directPng = null; }
+                        catch (Exception ex) { nativeRenderError = ex; directPng = null; }
                     }
                     if (renderMode == "native" && directPng == null)
-                        throw new OfficeCli.Core.CliException("--render native requires Windows with Microsoft PowerPoint installed.")
-                        { Code = "native_unavailable", Suggestion = "Use --render html or --render auto." };
+                        throw NativeRenderCliException("PowerPoint", nativeRenderError);
 
                     if (directPng == null)
                     {
@@ -353,14 +372,14 @@ static partial class CommandBuilder
                     if (over > 1.0) { vpW /= over; cellW /= over; cellH /= over; vpH /= over; }
 
                     // Native-first: render each real-Word page and tile (Windows + Word).
+                    Exception? nativeRenderError = null;
                     if (renderMode != "html" && OperatingSystem.IsWindows())
                     {
-                        try { directPng = OfficeCli.Core.WordPdfBackend.RenderGrid(file.FullName, $"1-{pageCount}", (int)Math.Round(cellW), (int)Math.Round(cellH), docGridCols, gap, pad); }
-                        catch { directPng = null; }
+                        try { directPng = OfficeCli.Core.WordPdfBackend.RenderGrid(file.FullName, $"1-{pageCount}", (int)Math.Round(cellW), (int)Math.Round(cellH), docGridCols, gap, pad, throwOnFailure: renderMode == "native"); }
+                        catch (Exception ex) { nativeRenderError = ex; directPng = null; }
                     }
                     if (renderMode == "native" && directPng == null)
-                        throw new OfficeCli.Core.CliException("--render native requires Windows with Microsoft Word installed.")
-                        { Code = "native_unavailable", Suggestion = "Use --render html or --render auto." };
+                        throw NativeRenderCliException("Word", nativeRenderError);
                     if (directPng == null)
                     {
                         // HTML fallback: layoutGrid tiles in-browser; size the viewport
@@ -378,16 +397,16 @@ static partial class CommandBuilder
                     var effectiveFilter = clipArg != null
                         ? pageFilter
                         : (string.IsNullOrEmpty(pageFilter) ? "1" : pageFilter);
+                    Exception? nativeRenderError = null;
                     if (renderMode != "html" && OperatingSystem.IsWindows())
                     {
                         // effectiveFilter is only null under --range, which forces
                         // renderMode=html — this native branch is then unreachable.
-                        try { directPng = OfficeCli.Core.WordPdfBackend.Render(file.FullName, effectiveFilter!); }
-                        catch { directPng = null; }
+                        try { directPng = OfficeCli.Core.WordPdfBackend.Render(file.FullName, effectiveFilter!, throwOnFailure: renderMode == "native"); }
+                        catch (Exception ex) { nativeRenderError = ex; directPng = null; }
                     }
                     if (renderMode == "native" && directPng == null)
-                        throw new OfficeCli.Core.CliException("--render native requires Windows with Microsoft Word installed.")
-                        { Code = "native_unavailable", Suggestion = "Use --render html or --render auto." };
+                        throw NativeRenderCliException("Word", nativeRenderError);
                     if (directPng == null)
                     {
                         html = RenderViaRegistry(wordHandler, "docx",

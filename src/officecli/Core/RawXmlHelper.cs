@@ -699,7 +699,47 @@ internal static class RawXmlHelper
         // Drop known SDK-validator false positives on xlsx <font> child order —
         // see IsBenignFontChildOrderError.
         errors.RemoveAll(IsBenignFontChildOrderError);
+        // Word itself may include paragraph-mark run properties (<w:rPr>) in
+        // the previous-state <w:pPr> nested under <w:pPrChange>. OpenXml SDK
+        // 3.x models that nested pPr as CT_PPrBase and false-flags rPr even
+        // when it is in Word's canonical position. Suppress only that one SDK
+        // diagnostic, only in the main document, and only when every affected
+        // snapshot has pStyle before rPr with rPr as its final child. A real
+        // rPr-before-pStyle ordering defect therefore remains visible.
+        errors.RemoveAll(e => IsBenignPPrChangeRunPropertiesError(e, clone));
         return errors;
+    }
+
+    private static bool IsBenignPPrChangeRunPropertiesError(
+        ValidationError error, OpenXmlPackage package)
+    {
+        if (package is not WordprocessingDocument word) return false;
+        if (!string.Equals(error.Part, "/word/document.xml", StringComparison.OrdinalIgnoreCase))
+            return false;
+        var path = error.Path ?? "";
+        var description = error.Description ?? "";
+        if (!path.Contains("pPrChange", StringComparison.OrdinalIgnoreCase)
+            || !description.Contains("rPr", StringComparison.Ordinal)
+            || (!description.Contains("invalid child", StringComparison.OrdinalIgnoreCase)
+                && !description.Contains("unexpected child", StringComparison.OrdinalIgnoreCase)))
+            return false;
+
+        var snapshots = word.MainDocumentPart?.Document?
+            .Descendants<DocumentFormat.OpenXml.Wordprocessing.ParagraphPropertiesChange>()
+            .Select(change => change.ChildElements.FirstOrDefault(child => child.LocalName == "pPr"))
+            .Where(snapshot => snapshot?.ChildElements.Any(child => child.LocalName == "rPr") == true)
+            .Cast<OpenXmlElement>()
+            .ToList() ?? new List<OpenXmlElement>();
+        if (snapshots.Count == 0) return false;
+
+        return snapshots.All(snapshot =>
+        {
+            var children = snapshot.ChildElements.ToList();
+            var rPrIndex = children.FindIndex(child => child.LocalName == "rPr");
+            var pStyleIndex = children.FindIndex(child => child.LocalName == "pStyle");
+            return rPrIndex == children.Count - 1
+                && (pStyleIndex < 0 || pStyleIndex < rPrIndex);
+        });
     }
 
     /// <summary>

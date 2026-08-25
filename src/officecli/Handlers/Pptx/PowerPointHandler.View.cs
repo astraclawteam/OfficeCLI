@@ -992,6 +992,10 @@ public partial class PowerPointHandler
                 if (limit.HasValue && issues.Count >= limit.Value) break;
             }
 
+            if (string.Equals(issueType, Core.IssueSubtypes.PptLayout,
+                    StringComparison.OrdinalIgnoreCase))
+                AppendOptInLayoutIssues(shapeTree, slideNum, slideW, slideH, issues, ref issueNum);
+
             if (limit.HasValue && issues.Count >= limit.Value) break;
         }
 

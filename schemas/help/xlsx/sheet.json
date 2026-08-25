@@ -163,21 +163,24 @@
     "orientation": {
       "type": "string",
       "description": "PageSetup orientation (portrait | landscape). Emitted only when set on the sheet.",
-      "add": false, "set": false, "get": true,
+      "add": false, "set": true, "get": true,
+      "examples": ["--prop orientation=landscape", "--prop orientation=portrait"],
       "readback": "page orientation (portrait|landscape)",
       "enforcement": "report"
     },
     "paperSize": {
       "type": "number",
       "description": "PageSetup paper-size code (OOXML enumeration; e.g. 1=Letter, 9=A4).",
-      "add": false, "set": false, "get": true,
+      "add": false, "set": true, "get": true,
+      "examples": ["--prop paperSize=9", "--prop paperSize=8"],
       "readback": "OOXML paper size code",
       "enforcement": "report"
     },
     "fitToPage": {
       "type": "string",
       "description": "PageSetup fit-to-page width x height (e.g. '1x1' = fit to one page).",
-      "add": false, "set": false, "get": true,
+      "add": false, "set": true, "get": true,
+      "examples": ["--prop fitToPage=1x0", "--prop fitToPage=1x1", "--prop fitToPage=none"],
       "readback": "WxH fit-to-page settings",
       "enforcement": "report"
     },
