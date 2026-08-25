@@ -1,0 +1,46 @@
+name: Release installer smoke
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  install:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            expected: officecli-linux-x64
+          - os: windows-latest
+            expected: officecli-win-x64.exe
+          - os: macos-15-intel
+            expected: officecli-mac-x64
+          - os: macos-latest
+            expected: officecli-mac-arm64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.release.tag_name }}
+
+      - name: Install published release
+        shell: bash
+        env:
+          MSYS_NO_PATHCONV: '1'
+          MSYS2_ARG_CONV_EXCL: '*'
+        run: |
+          expected_version="${{ github.event.release.tag_name }}"
+          expected_version="${expected_version#v}"
+          if [ "$RUNNER_OS" == "Windows" ]; then
+            pwsh -NoProfile -ExecutionPolicy Bypass -File ./install.ps1
+            installed="$LOCALAPPDATA/OfficeCLI/officecli.exe"
+          else
+            bash install.sh
+            installed="$HOME/.local/bin/officecli"
+          fi
+          test -f "$installed"
+          test "$("$installed" --version)" = "$expected_version"
