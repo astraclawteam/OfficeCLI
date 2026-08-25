@@ -3,6 +3,12 @@ name: Release installer smoke
 on:
   release:
     types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Immutable release tag to verify
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -22,10 +28,12 @@ jobs:
           - os: macos-latest
             expected: officecli-mac-arm64
     runs-on: ${{ matrix.os }}
+    env:
+      RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
     steps:
       - uses: actions/checkout@v5
         with:
-          ref: ${{ github.event.release.tag_name }}
+          ref: ${{ env.RELEASE_TAG }}
 
       - name: Install published release
         shell: bash
@@ -33,7 +41,7 @@ jobs:
           MSYS_NO_PATHCONV: '1'
           MSYS2_ARG_CONV_EXCL: '*'
         run: |
-          expected_version="${{ github.event.release.tag_name }}"
+          expected_version="$RELEASE_TAG"
           expected_version="${expected_version#v}"
           if [ "$RUNNER_OS" == "Windows" ]; then
             pwsh -NoProfile -ExecutionPolicy Bypass -File ./install.ps1
