@@ -87,7 +87,7 @@ This copies the binary to your PATH and installs the **officecli skill** into ev
 ## For Developers — See It Live in 30 Seconds
 
 ```bash
-# 1. Install (macOS / Linux) — or: brew install officecli / npm install -g @officecli/officecli
+# 1. Install (macOS / Linux) — or: brew install officecli
 curl -fsSL https://raw.githubusercontent.com/astraclawteam/OfficeCLI/main/install.sh | bash
 # Windows (PowerShell): irm https://raw.githubusercontent.com/astraclawteam/OfficeCLI/main/install.ps1 | iex
 
@@ -222,8 +222,6 @@ brew install officecli
 # Scoop (Windows)
 scoop install officecli
 
-# npm (all platforms — fetches the native binary for your platform)
-npm install -g @officecli/officecli
 ```
 
 **Or download manually** from [GitHub Releases](https://github.com/astraclawteam/OfficeCLI/releases):
