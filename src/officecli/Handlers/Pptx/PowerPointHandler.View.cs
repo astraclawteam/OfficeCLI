@@ -908,6 +908,38 @@ public partial class PowerPointHandler
                         }
                     }
                 }
+
+                var paragraphIndex = 0;
+                foreach (var paragraph in shape.TextBody?.Elements<Drawing.Paragraph>() ?? Enumerable.Empty<Drawing.Paragraph>())
+                {
+                    paragraphIndex++;
+                    if (!Core.PresentationSemanticInspector.HasDuplicateBullet(paragraph, out var bulletText)) continue;
+                    issues.Add(new DocumentIssue
+                    {
+                        Id = $"B{++issueNum}", Type = IssueType.Format,
+                        Subtype = Core.IssueSubtypes.DuplicateBullet, Severity = IssueSeverity.Warning,
+                        Path = $"{shapePath}/paragraph[{paragraphIndex}]",
+                        Message = $"Paragraph has a native bullet and a second visible bullet prefix: {bulletText.Trim()}",
+                        Suggestion = "Remove the typed bullet character and keep the native PowerPoint bullet formatting.",
+                    });
+                }
+            }
+
+            var semanticChartIndex = 0;
+            foreach (var chartPart in slidePart.ChartParts)
+            {
+                semanticChartIndex++;
+                foreach (var finding in Core.ChartSemanticInspector.Inspect(chartPart.ChartSpace))
+                {
+                    if (limit.HasValue && issues.Count >= limit.Value) break;
+                    issues.Add(new DocumentIssue
+                    {
+                        Id = $"C{++issueNum}", Type = IssueType.Content, Subtype = finding.Subtype,
+                        Severity = IssueSeverity.Warning,
+                        Path = $"/slide[{slideNum}]/chart[{semanticChartIndex}]",
+                        Message = finding.Message, Suggestion = finding.Suggestion,
+                    });
+                }
             }
 
             // Table row/grid width mismatch. OOXML requires each <a:tr> to have

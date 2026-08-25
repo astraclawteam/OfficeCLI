@@ -32,13 +32,16 @@ public sealed class DiagramNode
     public string Id = "";
     public string Label = "";
     public FlowShape Shape = FlowShape.Process;
+    public List<string> FactRefs = new();
 }
 
 public sealed class DiagramEdge
 {
+    public string Id = "";
     public string From = "";
     public string To = "";
     public string Label = "";
+    public List<string> FactRefs = new();
 }
 
 public sealed class DiagramGraph
@@ -79,21 +82,29 @@ public sealed class PlacedNode
     public string Label = "";
     public FlowShape Shape;
     public double X, Y, W, H; // cm, top-left + size
+    public List<string> FactRefs = new();
 }
 
 /// <summary>An edge as an orthogonal polyline; the emitter draws one straight
 /// connector per segment and puts the arrowhead on the final segment.</summary>
 public sealed class RoutedEdge
 {
+    public string Id = "";
+    public string? SourceNodeId;
+    public string? TargetNodeId;
+    public uint StartConnectionIndex;
+    public uint EndConnectionIndex;
     public List<Pt> Points = new();
     public bool ArrowAtEnd = true;
     public bool Dashed;          // dashed stroke (sequence lifelines & return messages)
+    public List<string> FactRefs = new();
 }
 
 public sealed class EdgeLabel
 {
     public string Text = "";
     public double Cx, Cy; // cm, center
+    public double W = 1.0, H = 0.58;
     // Flowchart labels sit ON the edge line and need an opaque (white) backing
     // to mask it. Sequence-message labels sit ABOVE the arrow in empty space, so
     // an opaque backing would only mask whatever lifeline it overlaps → set false.
@@ -102,6 +113,7 @@ public sealed class EdgeLabel
 
 public sealed class LaidOutGraph
 {
+    public string DiagramId = "";
     public readonly List<PlacedNode> Nodes = new();
     public readonly List<RoutedEdge> Edges = new();
     public readonly List<EdgeLabel> Labels = new();

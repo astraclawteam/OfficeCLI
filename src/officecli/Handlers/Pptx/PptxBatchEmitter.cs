@@ -789,6 +789,11 @@ public static partial class PptxBatchEmitter
                     // ImagePart survive via add-part + raw-set passthrough.
                     // The typed walk skips it here to avoid double-emit.
                     break;
+                case "smartart":
+                    // EmitSmartArtsForSlide owns the host graphicFrame and
+                    // every diagram part/relationship. Skip the typed node
+                    // here without a false "unrecognized child" warning.
+                    break;
                 case "zoom":
                     // PR3+ scope. ProbeUnsupportedOnSlide already records the
                     // zoom markers via raw-XML sniff; this branch catches
@@ -813,13 +818,10 @@ public static partial class PptxBatchEmitter
         foreach (var (cxnChild, cxnOrdinal) in deferredConnectors)
             EmitConnector(ppt, cxnChild, slidePath, items, ctx, cxnOrdinal);
 
-        // SmartArt graphicFrames live in /p:sld/p:cSld/p:spTree but are
-        // skipped by NodeBuilder (table/chart-only routing). Phase 3b emits
-        // them as add-part smartart (creates the four diagram sub-parts with
-        // caller-pinned rIds) followed by raw-set rows that fill each part's
-        // XML, and a final raw-set append on /p:sld/p:cSld/p:spTree with the
-        // graphicFrame XML. Caller-pinned rIds make the graphicFrame's
-        // <dgm:relIds> round-trip byte-equal.
+        // SmartArt graphicFrames surface as typed nodes for read/query, while
+        // this dedicated pass owns faithful replay: add-part recreates the
+        // diagram sub-parts with caller-pinned rIds and raw-set restores the
+        // original graphicFrame. The typed switch intentionally skips them.
         EmitSmartArtsForSlide(ppt, slideNum, slidePath, items, ctx);
 
         // Phase 3c-media: video/audio <p:pic> hosts with their underlying
@@ -1877,14 +1879,22 @@ public static partial class PptxBatchEmitter
             {
                 ["data"] = sa.DataRelId,
                 ["layout"] = sa.LayoutRelId,
-                ["colors"] = sa.ColorsRelId,
-                ["quickStyle"] = sa.QuickStyleRelId,
                 ["dataXml"] = CanonDiagramXml(sa.DataXml),
                 ["layoutXml"] = CanonDiagramXml(sa.LayoutXml),
-                ["colorsXml"] = CanonDiagramXml(sa.ColorsXml),
-                ["quickStyleXml"] = CanonDiagramXml(sa.QuickStyleXml),
                 ["skip-frame"] = "true",
             };
+            if (sa.ColorsRelId != null && sa.ColorsXml != null)
+            {
+                saProps["colors"] = sa.ColorsRelId;
+                saProps["colorsXml"] = CanonDiagramXml(sa.ColorsXml);
+            }
+            else saProps["omit-colors"] = "true";
+            if (sa.QuickStyleRelId != null && sa.QuickStyleXml != null)
+            {
+                saProps["quickStyle"] = sa.QuickStyleRelId;
+                saProps["quickStyleXml"] = CanonDiagramXml(sa.QuickStyleXml);
+            }
+            else saProps["omit-quick-style"] = "true";
             // The DSP cached-drawing part (child of the data part, referenced
             // by <dsp:dataModelExt relId="...">). Carry it + the pinned relId
             // so the data XML's reference resolves — without it PowerPoint

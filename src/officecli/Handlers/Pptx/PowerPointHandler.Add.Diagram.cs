@@ -14,17 +14,26 @@ namespace OfficeCli.Handlers;
 
 public partial class PowerPointHandler
 {
-    // A flowchart 'diagram' is an ADD-only synthesizer (like 'equation'): it
-    // parses mermaid text, lays out a graph, and expands into native, editable
-    // shapes + connectors on the slide. It is deliberately NOT a persistent
-    // element — after Add it is a set of ordinary shapes, so it has no matching
-    // Set/Get/Query on a "diagram" node (documented exception to the
-    // Add-and-Set feature checklist). Layout is format-agnostic (Core/Diagram);
-    // this method only maps the geometric IR onto DrawingML.
+    // DiagramSpec has one semantic model and two editable renderers. The default
+    // expands into native Shape+Connector elements; explicit render=smartart
+    // writes a persistent native SmartArt data model that smartart inspect/update
+    // can round-trip. Legacy Mermaid input remains an adapter to the shape or
+    // image paths. Layout and semantics stay format-agnostic in Core/Diagram.
     private const double CmToEmu = 360000.0;
 
     private string AddDiagram(string parentPath, int? index, Dictionary<string, string> properties)
     {
+        var specPath = properties.GetValueOrDefault("spec") ?? properties.GetValueOrDefault("diagramSpec");
+        if (!string.IsNullOrWhiteSpace(specPath))
+        {
+            var spec = DiagramSpec.Load(specPath);
+            var specRenderer = (properties.GetValueOrDefault("render") ?? "native").Trim().ToLowerInvariant();
+            if (specRenderer is "smartart" or "native-smartart")
+                return AddDiagramSmartArt(parentPath, properties, spec);
+            var theme = DiagramTheme.Load(properties.GetValueOrDefault("themeFile"));
+            return AddDiagramNative(parentPath, index, properties, DiagramCompiler.Compile(spec), theme);
+        }
+
         // Input mirrors `equation` (canonical domain word `formula` + alias `text`):
         //   mermaid / text / dsl   → inline flowchart text
         //   src / path             → load the text from a .mmd file (consistent with
@@ -60,10 +69,61 @@ public partial class PowerPointHandler
         return AddDiagramNative(parentPath, index, properties, mermaidText);
     }
 
+    private string AddDiagramSmartArt(string parentPath, Dictionary<string, string> properties, DiagramSpec spec)
+    {
+        var theme = DiagramTheme.Load(properties.GetValueOrDefault("themeFile"));
+        var m = Regex.Match(parentPath, @"/slide\[(\d+)\]", RegexOptions.IgnoreCase);
+        if (!m.Success)
+            throw new ArgumentException($"SmartArt diagram parent must be a slide (e.g. /slide[1]); got '{parentPath}'.");
+        int slideIdx = int.Parse(m.Groups[1].Value);
+        var slideParts = GetSlideParts().ToList();
+        if (slideIdx < 1 || slideIdx > slideParts.Count)
+            throw new ArgumentException($"slide {slideIdx} not found (total: {slideParts.Count}).");
+
+        AddPart(parentPath, "smartart", new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["dataXml"] = NativeSmartArtCodec.BuildDataXml(spec),
+            ["layoutXml"] = NativeSmartArtCodec.BuildLayoutXml(),
+            ["colorsXml"] = NativeSmartArtCodec.BuildColorsXml(theme),
+            ["quickStyleXml"] = NativeSmartArtCodec.BuildStyleXml(theme),
+        });
+
+        var slide = GetSlide(slideParts[slideIdx - 1]);
+        var shapeTree = slide.CommonSlideData?.ShapeTree
+            ?? throw new InvalidOperationException("slide shape tree is missing.");
+        var frame = shapeTree.Elements<GraphicFrame>().Last();
+        var nv = frame.NonVisualGraphicFrameProperties?.NonVisualDrawingProperties;
+        if (nv != null)
+        {
+            nv.Name = string.IsNullOrWhiteSpace(spec.Title) ? $"SmartArt {spec.DiagramId}" : spec.Title;
+            nv.Description = "DiagramId:" + spec.DiagramId
+                + ";DiagramRenderer:SmartArt;DiagramFactRefs:"
+                + string.Join(',', spec.Facts.Select(f => f.FactId));
+        }
+        var transform = frame.Transform;
+        if (transform != null)
+        {
+            if (properties.TryGetValue("x", out var x)) transform.Offset!.X = ParseEmu(x);
+            if (properties.TryGetValue("y", out var y)) transform.Offset!.Y = ParseEmu(y);
+            if (properties.TryGetValue("width", out var width)) transform.Extents!.Cx = ParseEmu(width);
+            if (properties.TryGetValue("height", out var height)) transform.Extents!.Cy = ParseEmu(height);
+        }
+        slide.Save();
+        var smartArtCount = shapeTree.Elements<GraphicFrame>().Count(g =>
+            g.Descendants().Any(e => e.LocalName == "relIds"
+                && e.NamespaceUri == "http://schemas.openxmlformats.org/drawingml/2006/diagram"));
+        return $"/slide[{slideIdx}]/smartart[{smartArtCount}]";
+    }
+
     // Built-in synthesizer: mermaid → laid-out graph → native editable shapes.
     private string AddDiagramNative(string parentPath, int? index, Dictionary<string, string> properties, string mermaidText)
     {
-        var lo = DiagramCompiler.Compile(mermaidText);
+        return AddDiagramNative(parentPath, index, properties, DiagramCompiler.Compile(mermaidText), DiagramTheme.Default);
+    }
+
+    private string AddDiagramNative(string parentPath, int? index, Dictionary<string, string> properties,
+                                    LaidOutGraph lo, DiagramTheme theme)
+    {
         if (lo.Nodes.Count == 0)
             throw new ArgumentException("diagram parsed to zero nodes — check the mermaid syntax.");
 
@@ -119,12 +179,12 @@ public partial class PowerPointHandler
         long Emu(double cm) => (long)Math.Round(cm * CmToEmu);
         double TX(double cm) => cm * sc + ox;   // natural cm → placed cm (x-axis)
         double TY(double cm) => cm * sc + oy;    // natural cm → placed cm (y-axis)
-        // Font scales WITH the geometry — the layout sized every box to hold its
-        // text at the base point size, so any uniform scale keeps text fitting.
-        // Floor at 1 only to avoid a 0pt run: a fixed higher floor forces the font
-        // LARGER than the shrunken box on a heavily fit-scaled diagram → overflow.
-        // The shape's normAutofit shrinks further if a rounding edge still overflows.
-        int fontPt = Math.Max(1, (int)Math.Round(18 * lo.FontScale * sc));
+        // Use a conservative, explicit presentation font size.  Microsoft Office
+        // and WPS do not apply DrawingML normAutofit identically, especially after
+        // CJK font substitution; 18pt can therefore cross a shape boundary even
+        // when the deterministic SVG fits.  Fourteen points remains readable on a
+        // slide and preserves enough host-independent wrap margin.
+        int fontPt = Math.Max(1, (int)Math.Floor(14 * lo.FontScale * sc));
 
         // Wrap the whole diagram in ONE group so it stays adjustable as a unit
         // AFTER Add: a human drags a single object; an agent addresses one stable
@@ -138,7 +198,8 @@ public partial class PowerPointHandler
         uint groupId = nextId++;
         var group = new GroupShape(
             new NonVisualGroupShapeProperties(
-                new NonVisualDrawingProperties { Id = groupId, Name = $"Diagram {groupId}" },
+                new NonVisualDrawingProperties { Id = groupId, Name = $"Diagram {groupId}",
+                    Description = DiagramMetadata(lo.DiagramId, null) },
                 new NonVisualGroupShapeDrawingProperties(),
                 new ApplicationNonVisualDrawingProperties()),
             new GroupShapeProperties(
@@ -149,36 +210,46 @@ public partial class PowerPointHandler
                     new Drawing.ChildExtents { Cx = gcx, Cy = gcy })));
 
         // nodes (appended first → behind connectors/labels in z-order)
+        var nodeShapeIds = new Dictionary<string, uint>(StringComparer.Ordinal);
         foreach (var n in lo.Nodes)
         {
-            var (geom, fill, line) = DiagramStyles.ByShape[n.Shape];
-            group.AppendChild(BuildDiagramShape(nextId++, geom, fill, line, n.Label, fontPt,
-                Emu(TX(n.X)), Emu(TY(n.Y)), Emu(n.W * sc), Emu(n.H * sc)));
+            var (geom, fill, line) = DiagramStyles.Resolve(n.Shape, theme);
+            var shapeId = nextId++;
+            nodeShapeIds[n.Id] = shapeId;
+            group.AppendChild(BuildDiagramShape(shapeId, geom, fill, line,
+                DiagramTextMetrics.WrappedText(n.Label, Math.Max(0.8, n.W - 0.6)), fontPt,
+                Emu(TX(n.X)), Emu(TY(n.Y)), Emu(n.W * sc), Emu(n.H * sc), n.FactRefs, lo.DiagramId,
+                theme.MinorLatinFont, theme.MinorEastAsiaFont));
         }
 
-        // edges: one straight connector per orthogonal segment; arrow on the last
+        // One native connector per semantic edge.  Start/end connection references
+        // make the line follow a node when the user moves it in Office or WPS.
+        // SVG/PDF retain the exact deterministic orthogonal route; the editable
+        // Office view delegates elbow rerouting to the host application.
         foreach (var e in lo.Edges)
         {
-            for (int i = 0; i < e.Points.Count - 1; i++)
-            {
-                var p1 = e.Points[i];
-                var p2 = e.Points[i + 1];
-                bool arrow = e.ArrowAtEnd && i == e.Points.Count - 2;
-                group.AppendChild(BuildDiagramConnector(nextId++,
-                    TX(p1.X), TY(p1.Y), TX(p2.X), TY(p2.Y), DiagramStyles.EdgeColor, arrow, e.Dashed));
-            }
+            if (e.Points.Count < 2) continue;
+            var p1 = e.Points[0]; var p2 = e.Points[^1];
+            uint? sourceShapeId = e.SourceNodeId is not null && nodeShapeIds.TryGetValue(e.SourceNodeId, out var source) ? source : null;
+            uint? targetShapeId = e.TargetNodeId is not null && nodeShapeIds.TryGetValue(e.TargetNodeId, out var target) ? target : null;
+            group.AppendChild(BuildDiagramConnector(nextId++, TX(p1.X), TY(p1.Y), TX(p2.X), TY(p2.Y),
+                theme.MutedText, e.ArrowAtEnd, e.Dashed, e.FactRefs, lo.DiagramId,
+                sourceShapeId, targetShapeId, e.StartConnectionIndex, e.EndConnectionIndex,
+                e.Points.Count > 2));
         }
 
         // edge labels (appended last → white masks sit on top of the lines)
         foreach (var lbl in lo.Labels)
         {
-            double w = Math.Max(1.0, DiagramLabelWidthCm(lbl.Text));
+            double w = lbl.W;
             // Opaque (flowchart) labels mask the edge line they sit on; sequence
             // labels sit in empty space above the arrow → no fill, so they don't
             // punch a white hole in whatever lifeline they overlap.
-            group.AppendChild(BuildDiagramShape(nextId++, "rect", lbl.Opaque ? "FFFFFF" : null, null, lbl.Text,
+            group.AppendChild(BuildDiagramShape(nextId++, "rect", lbl.Opaque ? "FFFFFF" : null, null,
+                DiagramTextMetrics.WrappedText(lbl.Text, Math.Max(0.6, lbl.W - 0.3)),
                 Math.Max(1, (int)Math.Round(10 * sc)),
-                Emu(TX(lbl.Cx - w / 2)), Emu(TY(lbl.Cy - 0.26)), Emu(w * sc), Emu(0.52 * sc)));
+                Emu(TX(lbl.Cx - w / 2)), Emu(TY(lbl.Cy - lbl.H / 2)), Emu(w * sc), Emu(lbl.H * sc), null,
+                lo.DiagramId, theme.MinorLatinFont, theme.MinorEastAsiaFont));
         }
 
         shapeTree.AppendChild(group);
@@ -296,12 +367,14 @@ public partial class PowerPointHandler
     }
 
     private Shape BuildDiagramShape(uint id, string geometry, string? fill, string? line, string text,
-                                    int fontPt, long x, long y, long cx, long cy)
+                                    int fontPt, long x, long y, long cx, long cy, IReadOnlyList<string>? factRefs,
+                                    string? diagramId = null, string? latinFont = null, string? eastAsiaFont = null)
     {
         var shape = new Shape
         {
             NonVisualShapeProperties = new NonVisualShapeProperties(
-                new NonVisualDrawingProperties { Id = id, Name = $"DiagramShape {id}" },
+                new NonVisualDrawingProperties { Id = id, Name = $"DiagramShape {id}",
+                    Description = DiagramMetadata(diagramId, factRefs) },
                 new NonVisualShapeDrawingProperties(),
                 new ApplicationNonVisualDrawingProperties()),
             ShapeProperties = new ShapeProperties(),
@@ -330,13 +403,20 @@ public partial class PowerPointHandler
             new Drawing.Paragraph(
                 new Drawing.ParagraphProperties { Alignment = Drawing.TextAlignmentTypeValues.Center },
                 new Drawing.Run(
-                    new Drawing.RunProperties { FontSize = fontPt * 100, Language = "en-US" },
+                    new Drawing.RunProperties(
+                        new Drawing.LatinFont { Typeface = latinFont ?? "Aptos" },
+                        new Drawing.EastAsianFont { Typeface = eastAsiaFont ?? "Microsoft YaHei" })
+                    { FontSize = fontPt * 100, Language = "zh-CN" },
                     new Drawing.Text(text))));
         return shape;
     }
 
     private ConnectionShape BuildDiagramConnector(uint id, double x1, double y1, double x2, double y2,
-                                                  string color, bool arrowAtEnd, bool dashed = false)
+                                                  string color, bool arrowAtEnd, bool dashed = false,
+                                                  IReadOnlyList<string>? factRefs = null, string? diagramId = null,
+                                                  uint? sourceShapeId = null, uint? targetShapeId = null,
+                                                  uint startConnectionIndex = 0, uint endConnectionIndex = 0,
+                                                  bool bent = false)
     {
         long ox = (long)Math.Round(Math.Min(x1, x2) * CmToEmu);
         long oy = (long)Math.Round(Math.Min(y1, y2) * CmToEmu);
@@ -354,15 +434,22 @@ public partial class PowerPointHandler
             new Drawing.Extents { Cx = cx, Cy = cy });
         if (x2 < x1) xfrm.HorizontalFlip = true;
         if (y2 < y1) xfrm.VerticalFlip = true;
+        var connectionProperties = new NonVisualConnectorShapeDrawingProperties();
+        if (sourceShapeId is not null)
+            connectionProperties.StartConnection = new Drawing.StartConnection { Id = sourceShapeId.Value, Index = startConnectionIndex };
+        if (targetShapeId is not null)
+            connectionProperties.EndConnection = new Drawing.EndConnection { Id = targetShapeId.Value, Index = endConnectionIndex };
         var connector = new ConnectionShape
         {
             NonVisualConnectionShapeProperties = new NonVisualConnectionShapeProperties(
-                new NonVisualDrawingProperties { Id = id, Name = $"DiagramEdge {id}" },
-                new NonVisualConnectorShapeDrawingProperties(),
+                new NonVisualDrawingProperties { Id = id, Name = $"DiagramEdge {id}",
+                    Description = DiagramMetadata(diagramId, factRefs) },
+                connectionProperties,
                 new ApplicationNonVisualDrawingProperties()),
             ShapeProperties = new ShapeProperties(
                 xfrm,
-                new Drawing.PresetGeometry(new Drawing.AdjustValueList()) { Preset = Drawing.ShapeTypeValues.StraightConnector1 }),
+                new Drawing.PresetGeometry(new Drawing.AdjustValueList())
+                    { Preset = bent ? Drawing.ShapeTypeValues.BentConnector3 : Drawing.ShapeTypeValues.StraightConnector1 }),
         };
         var outline = new Drawing.Outline(BuildSolidFill(color)) { Width = 12700 }; // 1pt
         if (dashed) // schema order: fill → prstDash → line-ends
@@ -371,6 +458,14 @@ public partial class PowerPointHandler
             outline.AppendChild(new Drawing.TailEnd { Type = Drawing.LineEndValues.Triangle });
         connector.ShapeProperties!.AppendChild(outline);
         return connector;
+    }
+
+    private static string? DiagramMetadata(string? diagramId, IReadOnlyList<string>? factRefs)
+    {
+        var fields = new List<string>();
+        if (!string.IsNullOrWhiteSpace(diagramId)) fields.Add("DiagramId:" + diagramId);
+        if (factRefs is { Count: > 0 }) fields.Add("DiagramFactRefs:" + string.Join(",", factRefs));
+        return fields.Count == 0 ? null : string.Join(";", fields);
     }
 
     private static double DiagramLabelWidthCm(string text)

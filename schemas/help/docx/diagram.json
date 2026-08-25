@@ -18,8 +18,27 @@
       "/body"
     ]
   },
-  "note": "Renders a mermaid diagram into native, editable drawing shapes + connectors in the body. Aliases: flowchart. ADD-ONLY synthesizer (like 'equation'): there is no persistent 'diagram' node, but the whole diagram is wrapped in ONE group (wpg:wgp) and Add returns its path (/body/group[N]), so it stays adjustable as a unit. get /body/group[N] reads the group back (type=group with x/y/width/height); set /body/group[N] --prop width=… --prop height=… resizes the whole diagram — child font sizes re-bake with the resize so text stays proportional; a lone width/height changes only that axis; add keepAspect=true to scale the other proportionally, or give BOTH for an exact box. set /body/group[N] --prop x=… --prop y=… moves the whole diagram (rewrites the floating anchor offset; a single axis leaves the other in place). remove /body/group[N] deletes it (the group and every child, no husk). Non-positive sizes are rejected. A human can instead drag the single group object in Word (note: an interactive drag scales the geometry but Word does not re-bake the absolute font size — use the CLI set for text to scale too). Individual node text is still reachable at /body/textbox[K]. (docx has no drawing 'query' — address the group by index.) The mermaid header selects the layout engine; supported: flowchart / graph, sequenceDiagram. Other mermaid types (gantt, pie, classDiagram, stateDiagram, erDiagram, ...) are rejected with a clear message until implemented. SIZING: docx has no slide to resize (no pptx-style poster) — the diagram always scales into the available space. Give width/height for an explicit box (may enlarge, aspect ratio preserved, like picture/chart); with neither it fits the section's text-area width and is never enlarged. Placed as floating shapes anchored to the page margin. The parse + layout engine is shared with the pptx 'diagram' emitter; only the docx drawing output differs.",
+  "note": "DiagramSpec v1 is the preferred semantic input. The default renderer creates native editable Word shapes and connectors at /body/group[N]; explicit render=smartart creates persistent native SmartArt at /body/smartart[N] from the same semantic spec. Both preserve fact references and accept the shared Office brand theme. Mermaid remains a compatibility input adapter.",
   "properties": {
+    "spec": {
+      "type": "string",
+      "description": "Preferred input: path to DiagramSpec v1 JSON. It carries semantic nodes, edges and source-backed fact references, never OOXML or coordinates. Alias: diagramSpec.",
+      "aliases": ["diagramSpec"],
+      "add": true,
+      "set": false,
+      "get": false,
+      "examples": ["--prop spec=diagram-spec.json"],
+      "enforcement": "reject"
+    },
+    "themeFile": {
+      "type": "string",
+      "description": "Optional path to the shared Office theme v1 JSON used for native diagram colors.",
+      "add": true,
+      "set": false,
+      "get": false,
+      "examples": ["--prop themeFile=brand-theme.json"],
+      "enforcement": "reject"
+    },
     "mermaid": {
       "type": "string",
       "description": "Mermaid diagram source. Canonical (mirrors equation's 'formula'). Aliases: text, dsl. The first line's header (flowchart TD / sequenceDiagram / ...) selects the diagram kind.",
@@ -74,10 +93,13 @@
     },
     "render": {
       "type": "string",
-      "description": "How to render. auto (default): use real mermaid.js via a headless browser (Chrome/Chromium/Edge) when available — covers EVERY mermaid type (gantt/pie/class/state/er/…) at full fidelity, embedded as a PNG with the mermaid source stamped into alt-text (regenerable); falls back to the native synthesizer when no browser is present. native: always the built-in editable-shape synthesizer (no browser; supported subset only; fully editable in Word). image: force the browser path (errors if no browser). mermaid.js is fetched once to a local cache (mirror d.officecli.ai, CDN fallback).",
+      "description": "How to render. With DiagramSpec, native/shapes is the default editable Shape+Connector renderer and smartart/native-smartart explicitly creates native editable SmartArt from the same semantic spec. With Mermaid input, auto uses mermaid.js when available and otherwise falls back to native shapes; image forces the browser path.",
       "enum": [
         "auto",
         "native",
+        "shapes",
+        "smartart",
+        "native-smartart",
         "image"
       ],
       "add": true,
@@ -85,6 +107,7 @@
       "get": false,
       "examples": [
         "--prop render=native",
+        "--prop render=smartart",
         "--prop render=image"
       ],
       "enforcement": "report"

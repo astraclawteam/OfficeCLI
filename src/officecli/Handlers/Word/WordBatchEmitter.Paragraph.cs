@@ -3166,18 +3166,11 @@ public static partial class WordBatchEmitter
             if (TryEmitTextbox(word, run, rawXml, parentPath, items, ctx, attachPara, paraTargetPath))
                 return true;
         }
-        // BUG-R3 (linked external image): a <w:drawing> carrying an
-        // unreconstructable relationship (linked-image r:link, SmartArt
-        // r:dm/r:lo/r:qs/r:cs) must NOT be raw-set verbatim — its relationship
-        // target isn't recreated, so the replayed drawing would dangle and fail
-        // [Semantic] validation. Drop it cleanly and surface the loss (mirrors
-        // the SmartArt/non-textbox warn-and-skip on the AlternateContent path
-        // above) instead of falling through to a silent raw-set or a silent
-        // return.
         // SmartArt: the diagram's data/layout/quickStyle/colors parts (plus the
         // data part's rendered-drawing child) ship base64-inlined in a
-        // self-contained `add diagram`, mirroring the `add activex` carrier —
-        // previously the whole diagram was warn-dropped as unreconstructable.
+        // self-contained inlined-parts carrier. Only a malformed or unsupported
+        // relationship that cannot be captured falls through to the explicit
+        // loss warning below; raw XML is never replayed with dangling rIds.
         if (!string.IsNullOrEmpty(rawXml) && rawXml.Contains("relIds")
             && word.GetDiagramEmitData(run.Path) is { } dgmData)
         {
@@ -3217,14 +3210,10 @@ public static partial class WordBatchEmitter
         return true;
     }
 
-    // SmartArt (diagram) drawings reference their data / layout / colors /
-    // quickStyle parts via r:dm / r:lo / r:qs / r:cs — relationships, but NOT
-    // r:embed/r:id. The dump never reconstructs those parts, so raw-setting the
-    // drawing verbatim leaves dangling relationships: the SDK validator NREs in
-    // RelationshipTypeConstraint and real Word refuses to open the file ("may be
-    // corrupt"). Treat such drawings as unreconstructable so the caller flags a
-    // loss warning instead of emitting a corrupt file. (Plain shapes/connectors
-    // carry no relationships and still round-trip via raw-set.)
+    // Called only after the SmartArt inlined-parts capture path had no complete
+    // carrier. Never raw-set relationship-bearing drawings: that would leave
+    // dangling rIds in the replayed package. Plain shapes/connectors carry no
+    // relationships and still round-trip via raw-set.
     private static bool DrawingHasUnreconstructableRel(string xml) =>
         xml.Contains("r:dm") || xml.Contains("r:lo") ||
         xml.Contains("r:qs") || xml.Contains("r:cs") ||

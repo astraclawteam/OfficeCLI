@@ -795,6 +795,10 @@ public partial class PowerPointHandler : IDocumentHandler, Rendering.IRenderMode
                 string? qsXml       = properties != null && properties.TryGetValue("quickStyleXml", out var qxv) ? qxv : null;
                 string? drawingXml  = properties != null && properties.TryGetValue("drawingXml", out var drxv) ? drxv : null;
                 string? drawingRelId = properties != null && properties.TryGetValue("drawingRelId", out var drrv) ? drrv : null;
+                bool omitColors = properties != null && properties.TryGetValue("omit-colors", out var ocv)
+                    && (ocv == "true" || ocv == "1");
+                bool omitQuickStyle = properties != null && properties.TryGetValue("omit-quick-style", out var oqv)
+                    && (oqv == "true" || oqv == "1");
 
                 // Reuse-aware creation: a second SmartArt on the same slide may
                 // share the layout/colors/quickStyle parts (see GetOrAddPinnedPart).
@@ -802,8 +806,11 @@ public partial class PowerPointHandler : IDocumentHandler, Rendering.IRenderMode
                 // four uniformly and skips rewriting a reused part's content.
                 DiagramDataPart   dataPart   = GetOrAddPinnedPart<DiagramDataPart>(saSlidePart, dataRid, out var dataCreated);
                 DiagramLayoutDefinitionPart layoutPart = GetOrAddPinnedPart<DiagramLayoutDefinitionPart>(saSlidePart, layoutRid, out var layoutCreated);
-                DiagramColorsPart colorsPart = GetOrAddPinnedPart<DiagramColorsPart>(saSlidePart, colorsRid, out var colorsCreated);
-                DiagramStylePart  stylePart  = GetOrAddPinnedPart<DiagramStylePart>(saSlidePart, qsRid, out var styleCreated);
+                DiagramColorsPart? colorsPart = null;
+                DiagramStylePart? stylePart = null;
+                bool colorsCreated = false, styleCreated = false;
+                if (!omitColors) colorsPart = GetOrAddPinnedPart<DiagramColorsPart>(saSlidePart, colorsRid, out colorsCreated);
+                if (!omitQuickStyle) stylePart = GetOrAddPinnedPart<DiagramStylePart>(saSlidePart, qsRid, out styleCreated);
 
                 // Write the real content when supplied; else seed a minimal
                 // typed root (keeps direct CLI `add-part smartart` usable).
@@ -825,10 +832,10 @@ public partial class PowerPointHandler : IDocumentHandler, Rendering.IRenderMode
                 if (layoutCreated)
                     WriteDiagramPartXml(layoutPart, layoutXml,
                         () => new DocumentFormat.OpenXml.Drawing.Diagrams.LayoutDefinition());
-                if (colorsCreated)
+                if (colorsCreated && colorsPart != null)
                     WriteDiagramPartXml(colorsPart, colorsXml,
                         () => new DocumentFormat.OpenXml.Drawing.Diagrams.ColorsDefinition());
-                if (styleCreated)
+                if (styleCreated && stylePart != null)
                     WriteDiagramPartXml(stylePart, qsXml,
                         () => new DocumentFormat.OpenXml.Drawing.Diagrams.StyleDefinition());
 
@@ -866,8 +873,8 @@ public partial class PowerPointHandler : IDocumentHandler, Rendering.IRenderMode
                 // "data=rIdX;layout=rIdY;colors=rIdZ;quickStyle=rIdW".
                 var dataActualRid   = saSlidePart.GetIdOfPart(dataPart);
                 var layoutActualRid = saSlidePart.GetIdOfPart(layoutPart);
-                var colorsActualRid = saSlidePart.GetIdOfPart(colorsPart);
-                var styleActualRid  = saSlidePart.GetIdOfPart(stylePart);
+                var colorsActualRid = colorsPart == null ? null : saSlidePart.GetIdOfPart(colorsPart);
+                var styleActualRid  = stylePart == null ? null : saSlidePart.GetIdOfPart(stylePart);
 
                 // Inject a minimal <p:graphicFrame> into the slide's spTree
                 // so GetSmartArtsOnSlide (which finds SmartArt only via the
@@ -927,7 +934,9 @@ public partial class PowerPointHandler : IDocumentHandler, Rendering.IRenderMode
                     }
                 }
 
-                var encoded = $"data={dataActualRid};layout={layoutActualRid};colors={colorsActualRid};quickStyle={styleActualRid}";
+                var encoded = $"data={dataActualRid};layout={layoutActualRid}"
+                    + (colorsActualRid == null ? "" : $";colors={colorsActualRid}")
+                    + (styleActualRid == null ? "" : $";quickStyle={styleActualRid}");
                 return (encoded, parentPartPath);
 
             case "video":
@@ -3135,12 +3144,12 @@ public partial class PowerPointHandler : IDocumentHandler, Rendering.IRenderMode
         string GraphicFrameXml,
         string DataRelId,
         string LayoutRelId,
-        string ColorsRelId,
-        string QuickStyleRelId,
+        string? ColorsRelId,
+        string? QuickStyleRelId,
         string DataXml,
         string LayoutXml,
-        string ColorsXml,
-        string QuickStyleXml,
+        string? ColorsXml,
+        string? QuickStyleXml,
         string? DrawingXml,
         string? DrawingRelId,
         // Images referenced by the data part and the DSP drawing part via their
@@ -3392,7 +3401,7 @@ public partial class PowerPointHandler : IDocumentHandler, Rendering.IRenderMode
                 else if (ln == "cs") cRid = v;
                 else if (ln == "qs") qRid = v;
             }
-            if (dRid == null || lRid == null || cRid == null || qRid == null) continue;
+            if (dRid == null || lRid == null) continue;
 
             string? xmlFor(string rid)
             {
@@ -3410,9 +3419,9 @@ public partial class PowerPointHandler : IDocumentHandler, Rendering.IRenderMode
 
             var dXml = xmlFor(dRid);
             var lXml = xmlFor(lRid);
-            var cXml = xmlFor(cRid);
-            var qXml = xmlFor(qRid);
-            if (dXml == null || lXml == null || cXml == null || qXml == null) continue;
+            var cXml = cRid == null ? null : xmlFor(cRid);
+            var qXml = qRid == null ? null : xmlFor(qRid);
+            if (dXml == null || lXml == null || (cRid != null && cXml == null) || (qRid != null && qXml == null)) continue;
 
             // The data part references a 5th part — the DSP cached-drawing
             // part — via <dsp:dataModelExt relId="..."> in the data XML. That

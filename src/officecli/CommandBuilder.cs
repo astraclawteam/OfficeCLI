@@ -193,6 +193,9 @@ static partial class CommandBuilder
         rootCommand.Add(BuildCreateCommand(jsonOption));
         rootCommand.Add(BuildMergeCommand(jsonOption));
         rootCommand.Add(BuildBrandExtractCommand(jsonOption));
+        rootCommand.Add(BuildDiagramCommand(jsonOption));
+        rootCommand.Add(BuildDiagramRefreshCommand(jsonOption));
+        rootCommand.Add(BuildSmartArtCommand(jsonOption));
         rootCommand.Add(BuildFidelitySnapshotCommand(jsonOption));
         rootCommand.Add(BuildFidelityDiffCommand(jsonOption));
         rootCommand.Add(BuildPluginsCommand(jsonOption));

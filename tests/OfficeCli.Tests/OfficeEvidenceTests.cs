@@ -89,6 +89,31 @@ public sealed class OfficeEvidenceTests
     }
 
     [Fact]
+    public void BrandExtractionMarksMasterAndHeaderImagesAsSourceBoundLogos()
+    {
+        using var temp = new TempDirectory();
+        var path = temp.File("template.pptx");
+        using (var archive = ZipFile.Open(path, ZipArchiveMode.Create))
+        {
+            var types = archive.CreateEntry("[Content_Types].xml");
+            using (var writer = new StreamWriter(types.Open()))
+                writer.Write("<Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\"/>");
+            var logo = archive.CreateEntry("ppt/media/logo.png");
+            using (var stream = logo.Open())
+                stream.Write(new byte[] { 0x89, 0x50, 0x4e, 0x47, 1, 2, 3, 4 });
+            var rels = archive.CreateEntry("ppt/slideMasters/_rels/slideMaster1.xml.rels");
+            using (var writer = new StreamWriter(rels.Open()))
+                writer.Write("<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\"><Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/image\" Target=\"../media/logo.png\"/></Relationships>");
+        }
+
+        var (profile, _) = OfficePackageEvidence.ExtractBrand(path, "brand-with-logo", "带 Logo 品牌", temp.File("assets"));
+
+        var logoAsset = Assert.Single(profile.Assets);
+        Assert.Equal("logo", logoAsset.Role);
+        Assert.Equal("ppt/media/logo.png", logoAsset.PackagePath);
+    }
+
+    [Fact]
     public void FormulaLossIsAReleaseBlockingFidelityChange()
     {
         using var temp = new TempDirectory();

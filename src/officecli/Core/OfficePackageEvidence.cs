@@ -201,6 +201,7 @@ internal static class OfficePackageEvidence
 
         Directory.CreateDirectory(assetDirectory);
         var assets = new List<OfficeBrandAsset>();
+        var logoMedia = FindLogoMediaCandidates(archive, snapshot.Format);
         foreach (var entry in archive.Entries.Where(IsBrandMediaCandidate).OrderBy(entry => Normalize(entry.FullName), StringComparer.Ordinal))
         {
             var bytes = ReadEntryBytes(entry);
@@ -211,7 +212,9 @@ internal static class OfficePackageEvidence
             File.WriteAllBytes(target, bytes);
             assets.Add(new OfficeBrandAsset(
                 $"brand-asset-{assets.Count + 1:D2}", fileName, digest, bytes.LongLength,
-                Normalize(entry.FullName), ClassifyBrandAssetRole(snapshot.Format, Normalize(entry.FullName))));
+                Normalize(entry.FullName), logoMedia.Contains(Normalize(entry.FullName))
+                    ? "logo"
+                    : ClassifyBrandAssetRole(snapshot.Format)));
         }
 
         var formats = BuildFormatProfile(snapshot, archive);
@@ -403,6 +406,25 @@ internal static class OfficePackageEvidence
             ["media"] = paths.Count(path => path.Contains("/media/", StringComparison.OrdinalIgnoreCase)),
             ["charts"] = paths.Count(path => path.Contains("/charts/chart", StringComparison.OrdinalIgnoreCase) && path.EndsWith(".xml", StringComparison.OrdinalIgnoreCase)),
         };
+        var smartArtDataPaths = paths.Where(path => path.EndsWith(".xml", StringComparison.OrdinalIgnoreCase)
+            && (path.Contains("/diagrams/data", StringComparison.OrdinalIgnoreCase)
+                || path.Contains("/graphics/data", StringComparison.OrdinalIgnoreCase)
+                || path.StartsWith("graphics/data", StringComparison.OrdinalIgnoreCase))).ToArray();
+        result["smartArtDataParts"] = smartArtDataPaths.Length;
+        result["smartArtLayoutParts"] = paths.Count(path => path.EndsWith(".xml", StringComparison.OrdinalIgnoreCase)
+            && (path.Contains("/diagrams/layout", StringComparison.OrdinalIgnoreCase)
+                || path.Contains("/graphics/layout", StringComparison.OrdinalIgnoreCase)
+                || path.StartsWith("graphics/layout", StringComparison.OrdinalIgnoreCase)));
+        result["smartArtColorParts"] = paths.Count(path => path.EndsWith(".xml", StringComparison.OrdinalIgnoreCase)
+            && (path.Contains("/diagrams/colors", StringComparison.OrdinalIgnoreCase)
+                || path.Contains("/graphics/colors", StringComparison.OrdinalIgnoreCase)
+                || path.StartsWith("graphics/colors", StringComparison.OrdinalIgnoreCase)));
+        result["smartArtStyleParts"] = paths.Count(path => path.EndsWith(".xml", StringComparison.OrdinalIgnoreCase)
+            && (path.Contains("/diagrams/quickStyle", StringComparison.OrdinalIgnoreCase)
+                || path.Contains("/graphics/quickStyle", StringComparison.OrdinalIgnoreCase)
+                || path.StartsWith("graphics/quickStyle", StringComparison.OrdinalIgnoreCase)));
+        result["smartArtNodes"] = smartArtDataPaths.Sum(path => CountXmlNodes(archive, path, "pt"));
+        result["smartArtConnections"] = smartArtDataPaths.Sum(path => CountXmlNodes(archive, path, "cxn"));
         if (format == "docx")
         {
             result["styles"] = CountXmlNodes(archive, "word/styles.xml", "style");
@@ -476,7 +498,7 @@ internal static class OfficePackageEvidence
     private static string ClassifyPart(string format, string path)
     {
         if (path is "[Content_Types].xml" || path.EndsWith(".rels", StringComparison.OrdinalIgnoreCase)) return "package";
-        if (path.Contains("/theme/", StringComparison.OrdinalIgnoreCase) || path.Contains("/styles", StringComparison.OrdinalIgnoreCase) || path.Contains("/slideMasters/", StringComparison.OrdinalIgnoreCase) || path.Contains("/slideLayouts/", StringComparison.OrdinalIgnoreCase) || path.Contains("/header", StringComparison.OrdinalIgnoreCase) || path.Contains("/footer", StringComparison.OrdinalIgnoreCase) || path.Contains("/comments", StringComparison.OrdinalIgnoreCase)) return "design";
+        if (path.Contains("/theme/", StringComparison.OrdinalIgnoreCase) || path.Contains("/styles", StringComparison.OrdinalIgnoreCase) || path.Contains("/diagrams/", StringComparison.OrdinalIgnoreCase) || path.Contains("/graphics/", StringComparison.OrdinalIgnoreCase) || path.StartsWith("graphics/", StringComparison.OrdinalIgnoreCase) || path.Contains("/slideMasters/", StringComparison.OrdinalIgnoreCase) || path.Contains("/slideLayouts/", StringComparison.OrdinalIgnoreCase) || path.Contains("/header", StringComparison.OrdinalIgnoreCase) || path.Contains("/footer", StringComparison.OrdinalIgnoreCase) || path.Contains("/comments", StringComparison.OrdinalIgnoreCase)) return "design";
         if ((format == "docx" && path == "word/document.xml") || (format == "xlsx" && path.StartsWith("xl/worksheets/", StringComparison.OrdinalIgnoreCase)) || (format == "pptx" && path.StartsWith("ppt/slides/", StringComparison.OrdinalIgnoreCase))) return "content";
         return "structure";
     }
@@ -484,11 +506,63 @@ internal static class OfficePackageEvidence
     private static bool IsBrandMediaCandidate(ZipArchiveEntry entry) =>
         !string.IsNullOrEmpty(entry.Name) && Normalize(entry.FullName).Contains("/media/", StringComparison.OrdinalIgnoreCase) && entry.Length <= 16 * 1024 * 1024;
 
-    private static string ClassifyBrandAssetRole(string format, string path)
+    private static string ClassifyBrandAssetRole(string format)
     {
         if (format == "docx") return "word-media-candidate";
         if (format == "pptx") return "presentation-media-candidate";
         return "workbook-media-candidate";
+    }
+
+    private static HashSet<string> FindLogoMediaCandidates(ZipArchive archive, string format)
+    {
+        var candidates = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var entry in archive.Entries.Where(entry => entry.Name.EndsWith(".rels", StringComparison.OrdinalIgnoreCase)))
+        {
+            var path = Normalize(entry.FullName);
+            var stableBrandHost = format switch
+            {
+                "pptx" => path.StartsWith("ppt/slideMasters/_rels/", StringComparison.OrdinalIgnoreCase)
+                    || path.StartsWith("ppt/slideLayouts/_rels/", StringComparison.OrdinalIgnoreCase),
+                "docx" => path.StartsWith("word/_rels/header", StringComparison.OrdinalIgnoreCase)
+                    || path.StartsWith("word/_rels/footer", StringComparison.OrdinalIgnoreCase),
+                _ => false,
+            };
+            if (!stableBrandHost) continue;
+            XDocument relationships;
+            try { relationships = XDocument.Parse(ReadEntryText(entry)); }
+            catch { continue; }
+            var marker = path.IndexOf("/_rels/", StringComparison.OrdinalIgnoreCase);
+            if (marker < 0) continue;
+            var ownerDirectory = path[..marker];
+            foreach (var relationship in relationships.Descendants().Where(element => element.Name.LocalName == "Relationship"))
+            {
+                var type = relationship.Attribute("Type")?.Value ?? "";
+                var target = relationship.Attribute("Target")?.Value ?? "";
+                var targetMode = relationship.Attribute("TargetMode")?.Value ?? "";
+                if (!type.EndsWith("/image", StringComparison.OrdinalIgnoreCase)
+                    || targetMode.Equals("External", StringComparison.OrdinalIgnoreCase))
+                    continue;
+                var resolved = ResolvePackageTarget(ownerDirectory, target);
+                if (resolved.Contains("/media/", StringComparison.OrdinalIgnoreCase)) candidates.Add(resolved);
+            }
+        }
+        return candidates;
+    }
+
+    private static string ResolvePackageTarget(string ownerDirectory, string target)
+    {
+        var segments = new List<string>(ownerDirectory.Split('/', StringSplitOptions.RemoveEmptyEntries));
+        foreach (var segment in Normalize(target).Split('/', StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (segment == ".") continue;
+            if (segment == "..")
+            {
+                if (segments.Count > 0) segments.RemoveAt(segments.Count - 1);
+                continue;
+            }
+            segments.Add(segment);
+        }
+        return string.Join('/', segments);
     }
 
     private static string HashEntry(ZipArchiveEntry entry)

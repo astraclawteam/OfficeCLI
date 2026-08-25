@@ -8,13 +8,15 @@ using System.Text.RegularExpressions;
 namespace OfficeCli.Core.Diagram;
 
 // ---- semantic IR (sequence flavor) ------------------------------------------
-public sealed class SeqParticipant { public string Id = ""; public string Label = ""; }
+public sealed class SeqParticipant { public string Id = ""; public string Label = ""; public List<string> FactRefs = new(); }
 
 public sealed class SeqMessage
 {
+    public string Id = "";
     public string From = "", To = "", Label = "";
     public bool Dashed;   // dotted line (mermaid `--`) — conventionally a return
     public bool Arrow;    // has an arrowhead (`>>`, `>`, `x`, `)`)
+    public List<string> FactRefs = new();
 }
 
 public sealed class SequenceDiagram
@@ -120,7 +122,7 @@ public static class SequenceLayout
         foreach (var p in order)
         {
             lo.Nodes.Add(new PlacedNode { Id = p.Id, Label = p.Label, Shape = FlowShape.Process,
-                X = left[p.Id], Y = top, W = width[p.Id], H = boxH });
+                X = left[p.Id], Y = top, W = width[p.Id], H = boxH, FactRefs = new List<string>(p.FactRefs) });
             lo.Edges.Add(new RoutedEdge
             {
                 Dashed = true, ArrowAtEnd = false,
@@ -137,17 +139,20 @@ public static class SequenceLayout
             if (m.From == m.To)
             {
                 double r = x1 + 1.4;
-                lo.Edges.Add(new RoutedEdge { ArrowAtEnd = true, Points = new List<Pt>
+                lo.Edges.Add(new RoutedEdge { Id = m.Id, SourceNodeId = m.From, TargetNodeId = m.To,
+                    StartConnectionIndex = 1, EndConnectionIndex = 1, ArrowAtEnd = true, FactRefs = new List<string>(m.FactRefs), Points = new List<Pt>
                     { new(x1, y), new(r, y), new(r, y + 0.45), new(x1, y + 0.45) } });
                 if (m.Label.Length > 0)
-                    lo.Labels.Add(new EdgeLabel { Text = m.Label, Cx = x1 + 1.0, Cy = y - 0.25, Opaque = false });
+                    lo.Labels.Add(DiagramTextMetrics.EdgeLabel(m.Label, x1 + 1.0, y - 0.25, false));
             }
             else
             {
-                lo.Edges.Add(new RoutedEdge { ArrowAtEnd = m.Arrow, Dashed = m.Dashed,
+                lo.Edges.Add(new RoutedEdge { Id = m.Id, SourceNodeId = m.From, TargetNodeId = m.To,
+                    StartConnectionIndex = x2 >= x1 ? 1U : 3U, EndConnectionIndex = x2 >= x1 ? 3U : 1U,
+                    ArrowAtEnd = m.Arrow, Dashed = m.Dashed, FactRefs = new List<string>(m.FactRefs),
                     Points = new List<Pt> { new(x1, y), new(x2, y) } });
                 if (m.Label.Length > 0)
-                    lo.Labels.Add(new EdgeLabel { Text = m.Label, Cx = (x1 + x2) / 2, Cy = y - 0.5, Opaque = false });
+                    lo.Labels.Add(DiagramTextMetrics.EdgeLabel(m.Label, (x1 + x2) / 2, y - 0.5, false));
             }
         }
         return lo;
@@ -155,8 +160,6 @@ public static class SequenceLayout
 
     private static double TextWidth(string s)
     {
-        double w = 0;
-        foreach (var c in s) w += c > 0x2E80 ? 0.58 : 0.30;
-        return w;
+        return DiagramTextMetrics.WidthCm(s);
     }
 }

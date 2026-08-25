@@ -78,7 +78,7 @@ public static partial class WordBatchEmitter
                                    // false alarm (source/replay MD5 identical)
         "/word/charts/",           // chart XML + embedded xlsx — chart run emit
         "/word/embeddings/",       // OLE payloads — warning already raised per-run
-        "/word/diagrams/",         // SmartArt — partial coverage via shape emit
+        "/word/diagrams/",         // SmartArt — inlined-parts carrier preserves the native package graph
         "/word/activeX/",          // ActiveX controls — `add activex` inlined-parts carrier
         "/customXml/",             // customXml data stores — EmitCustomXmlRaw embed-binary pairs
         "/word/printerSettings/",  // SDK strips on save

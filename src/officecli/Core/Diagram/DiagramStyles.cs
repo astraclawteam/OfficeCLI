@@ -32,4 +32,17 @@ public static class DiagramStyles
 
     /// <summary>Connector / edge stroke color (dark grey).</summary>
     public const string EdgeColor = "4D4D4D";
+
+    public static (string Geometry, string Fill, string Line) Resolve(FlowShape shape, DiagramTheme theme)
+    {
+        var geometry = ByShape[shape].Geometry;
+        return shape switch
+        {
+            FlowShape.Decision or FlowShape.Hexagon => (geometry, theme.Warning, theme.MutedText),
+            FlowShape.Terminator or FlowShape.Stadium => (geometry, theme.Positive, theme.MutedText),
+            FlowShape.Circle => (geometry, theme.Danger, theme.MutedText),
+            FlowShape.Database => (geometry, theme.Accent, theme.MutedText),
+            _ => (geometry, theme.Surface, theme.Primary),
+        };
+    }
 }

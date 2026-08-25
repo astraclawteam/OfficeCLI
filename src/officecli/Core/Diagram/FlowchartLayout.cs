@@ -31,10 +31,12 @@ public static class FlowchartLayout
         public FlowShape Shape;
         public double X, Y, W, H;
         public int Rank;
+        public List<string> FactRefs = new();
     }
 
     private sealed class WEdge
     {
+        public string Id = "";
         public string From = "", To = "", Label = "";
         public bool Rev, Self;
         public List<string> Wp = new();     // waypoint dummy ids, source→target order
@@ -42,6 +44,7 @@ public static class FlowchartLayout
         public string SSide = "", TSide = "";
         public Pt SRef, TRef;
         public double LabelDy;
+        public List<string> FactRefs = new();
     }
 
     public static LaidOutGraph Layout(DiagramGraph g)
@@ -61,7 +64,7 @@ public static class FlowchartLayout
         var real = new List<string>();
         foreach (var dn in g.Nodes)
         {
-            var n = new WNode { Id = dn.Id, Label = dn.Label, Shape = dn.Shape };
+            var n = new WNode { Id = dn.Id, Label = dn.Label, Shape = dn.Shape, FactRefs = new List<string>(dn.FactRefs) };
             SizeNode(n);
             nodes[dn.Id] = n;
             real.Add(dn.Id);
@@ -71,7 +74,8 @@ public static class FlowchartLayout
         foreach (var de in g.Edges)
         {
             if (!nodes.ContainsKey(de.From) || !nodes.ContainsKey(de.To)) continue;
-            edges.Add(new WEdge { From = de.From, To = de.To, Label = de.Label, Self = de.From == de.To });
+            edges.Add(new WEdge { Id = de.Id, From = de.From, To = de.To, Label = de.Label,
+                Self = de.From == de.To, FactRefs = new List<string>(de.FactRefs) });
         }
 
         // 3a. break cycles: DFS, mark back edges (to a node on the stack)
@@ -244,7 +248,8 @@ public static class FlowchartLayout
         foreach (var i in real)
         {
             var n = nodes[i];
-            outp.Nodes.Add(new PlacedNode { Id = n.Id, Label = n.Label, Shape = n.Shape, X = n.X, Y = n.Y, W = n.W, H = n.H });
+            outp.Nodes.Add(new PlacedNode { Id = n.Id, Label = n.Label, Shape = n.Shape, X = n.X, Y = n.Y, W = n.W, H = n.H,
+                FactRefs = new List<string>(n.FactRefs) });
         }
 
         Route(outp, nodes, edges, g, td);
@@ -373,7 +378,11 @@ public static class FlowchartLayout
         for (int ei = 0; ei < valid.Count; ei++)
         {
             var e = valid[ei];
-            outp.Edges.Add(new RoutedEdge { Points = routes[ei], ArrowAtEnd = true });
+            var points = routes[ei];
+            outp.Edges.Add(new RoutedEdge { Id = e.Id, SourceNodeId = e.From, TargetNodeId = e.To,
+                StartConnectionIndex = ConnectionIndex(nodes[e.From], points[0]),
+                EndConnectionIndex = ConnectionIndex(nodes[e.To], points[^1]),
+                Points = points, ArrowAtEnd = true, FactRefs = new List<string>(e.FactRefs) });
             if (!string.IsNullOrEmpty(e.Label))
             {
                 var p0 = routes[ei][0]; var p1 = routes[ei][1];
@@ -385,7 +394,7 @@ public static class FlowchartLayout
                 double t = (Math.Abs(dy) < 0.05 && Math.Abs(dx) > 0.05)
                     ? 0.5
                     : Math.Min(0.85, slen * 0.45) / slen;
-                outp.Labels.Add(new EdgeLabel { Text = e.Label, Cx = p0.X + dx * t, Cy = p0.Y + dy * t + e.LabelDy });
+                outp.Labels.Add(DiagramTextMetrics.EdgeLabel(e.Label, p0.X + dx * t, p0.Y + dy * t + e.LabelDy, true));
             }
         }
 
@@ -407,9 +416,11 @@ public static class FlowchartLayout
                 pts.Add(new Pt(a, by)); pts.Add(new Pt(a, by + L)); pts.Add(new Pt(b, by + L)); pts.Add(new Pt(b, by));
                 lp = new Pt((a + b) / 2, by + L + 0.3);
             }
-            outp.Edges.Add(new RoutedEdge { Points = pts, ArrowAtEnd = true });
+            outp.Edges.Add(new RoutedEdge { Id = e.Id, SourceNodeId = e.From, TargetNodeId = e.To,
+                StartConnectionIndex = ConnectionIndex(n, pts[0]), EndConnectionIndex = ConnectionIndex(n, pts[^1]),
+                Points = pts, ArrowAtEnd = true, FactRefs = new List<string>(e.FactRefs) });
             if (!string.IsNullOrEmpty(e.Label))
-                outp.Labels.Add(new EdgeLabel { Text = e.Label, Cx = lp.X, Cy = lp.Y });
+                outp.Labels.Add(DiagramTextMetrics.EdgeLabel(e.Label, lp.X, lp.Y, true));
         }
     }
 
@@ -592,19 +603,32 @@ public static class FlowchartLayout
     }
 
     // ---- sizing -------------------------------------------------------------
-    private static (double w, int lines) TextExtent(string label)
+    private static (double w, int lines) TextExtent(string label) => DiagramTextMetrics.NodeExtent(label);
+
+    private static uint ConnectionIndex(WNode node, Pt point)
     {
-        double w = 0;
-        foreach (var c in label) w += c > 0x2E80 ? 0.58 : 0.30;
-        const double maxLine = 5.0;
-        int lines = Math.Max(1, (int)(w / maxLine) + (w % maxLine != 0 ? 1 : 0));
-        return (Math.Min(w, maxLine), lines);
+        var distances = new[]
+        {
+            Math.Abs(point.Y - node.Y),
+            Math.Abs(point.X - (node.X + node.W)),
+            Math.Abs(point.Y - (node.Y + node.H)),
+            Math.Abs(point.X - node.X),
+        };
+        var best = 0;
+        for (var index = 1; index < distances.Length; index++)
+            if (distances[index] < distances[best]) best = index;
+        return (uint)best;
     }
 
     private static void SizeNode(WNode n)
     {
         var (tw, lines) = TextExtent(n.Label);
-        double w = tw + 1.0, h = 0.7 + lines * 0.62;
+        // Give native Office hosts enough vertical breathing room for CJK font
+        // substitution and explicit deterministic line breaks.  SVG uses the
+        // same line count, but Word/WPS and PowerPoint/Office have slightly
+        // different ascent/descent metrics; a two-line node therefore needs a
+        // conservative box instead of relying on host-specific auto-fit.
+        double w = tw + 1.0, h = 1.10 + lines * 0.72;
         switch (n.Shape)
         {
             case FlowShape.Decision: w = tw * 2.2 + 1.0; h = Math.Max(lines * 1.24 + 0.9, 2.2); break;

@@ -65,6 +65,7 @@ public static partial class PptxBatchEmitter
         "/ppt/embeddings/",       // chart xlsx / OLE payloads — EmitChart / EmitOleForSlide
         "/ppt/charts/",           // chart XML — EmitChart
         "/ppt/diagrams/",         // SmartArt — EmitSmartArtsForSlide
+        "/ppt/graphics/",         // SDK 3.x SmartArt allocation base — EmitSmartArtsForSlide
         "/ppt/printerSettings/",  // presentation-level ExtendedPart — carried via add-part extpart (GetPresentationExtendedParts)
     };
 

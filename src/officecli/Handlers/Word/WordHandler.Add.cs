@@ -205,10 +205,10 @@ public partial class WordHandler
         {
             "paragraph" or "p" => AddParagraph(parent, parentPath, index, properties),
             "equation" or "formula" or "math" => AddEquation(parent, parentPath, index, properties),
-            // `diagram` is overloaded: the mermaid synthesizer (mermaid/text/dsl/src)
-            // and the dump→batch verbatim carrier that rebuilds a native OOXML
-            // SmartArt diagram from raw parts (carries `runXml`). Route to mermaid
-            // only when it is NOT the parts carrier; `flowchart` is always mermaid.
+            // `diagram` is overloaded: DiagramSpec/Mermaid synthesis and the
+            // dump→batch carrier that rebuilds native SmartArt from raw parts.
+            // A runXml payload identifies the latter; flowchart remains the
+            // legacy Mermaid alias.
             "flowchart" => AddDiagram(parent, parentPath, index, properties),
             "diagram" when !properties.ContainsKey("runXml")
                 => AddDiagram(parent, parentPath, index, properties),

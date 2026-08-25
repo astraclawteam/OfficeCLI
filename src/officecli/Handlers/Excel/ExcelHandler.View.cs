@@ -808,6 +808,52 @@ public partial class ExcelHandler
             });
         }
 
+        var semanticChartIndex = 0;
+        foreach (var (sheetName, worksheetPart) in GetWorksheets())
+        {
+            foreach (var chartPart in worksheetPart.DrawingsPart?.ChartParts ?? Enumerable.Empty<ChartPart>())
+            {
+                semanticChartIndex++;
+                foreach (var finding in Core.ChartSemanticInspector.Inspect(chartPart.ChartSpace))
+                {
+                    if (limit.HasValue && issues.Count >= limit.Value) break;
+                    issues.Add(new DocumentIssue
+                    {
+                        Id = $"C{++issueNum}", Type = IssueType.Content, Subtype = finding.Subtype,
+                        Severity = IssueSeverity.Warning, Path = $"/{sheetName}/chart[{semanticChartIndex}]",
+                        Message = finding.Message, Suggestion = finding.Suggestion,
+                    });
+                }
+            }
+        }
+
+        var printSheetIndex = 0;
+        foreach (var (sheetName, worksheetPart) in GetWorksheets())
+        {
+            var sheet = GetSheet(worksheetPart);
+            var maxColumn = sheet.Descendants<Cell>()
+                .Select(cell => Regex.Match(cell.CellReference?.Value ?? "", "^[A-Za-z]+", RegexOptions.CultureInvariant).Value)
+                .Where(value => value.Length > 0)
+                .Select(value => value.Aggregate(0, (number, letter) => checked(number * 26 + char.ToUpperInvariant(letter) - 'A' + 1)))
+                .DefaultIfEmpty(0).Max();
+            var setup = sheet.GetFirstChild<PageSetup>();
+            var fitToOnePageWide = setup?.FitToWidth?.Value == 1;
+            var printArea = _doc.WorkbookPart?.Workbook?.DefinedNames?.Elements<DefinedName>()
+                .Any(name => name.Name?.Value == "_xlnm.Print_Area" && name.LocalSheetId?.Value == (uint)printSheetIndex) == true;
+            if (maxColumn >= 8 && (!fitToOnePageWide || !printArea))
+            {
+                issues.Add(new DocumentIssue
+                {
+                    Id = $"P{++issueNum}", Type = IssueType.Format, Subtype = Core.IssueSubtypes.ExcelPrintLayout,
+                    Severity = IssueSeverity.Warning, Path = $"/{sheetName}",
+                    Message = $"Wide worksheet uses {maxColumn} column(s) without a complete one-page-wide print contract.",
+                    Context = $"fitToWidth={(setup?.FitToWidth?.Value.ToString() ?? "unset")}, printArea={printArea}",
+                    Suggestion = "Set an explicit print area, paper size and orientation, then use fitToWidth=1 and inspect the final PDF.",
+                });
+            }
+            printSheetIndex++;
+        }
+
         // Chart numCache vs live cell values — stale-cache detection.
         // Opt-in only via `--type chart_cache_stale`. Two reasons:
         //   (1) Cost — walks every chart × every series × every point and

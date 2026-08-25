@@ -7,6 +7,7 @@ using System.Linq;
 using System.Security;
 using System.Text;
 using DocumentFormat.OpenXml;
+using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Wordprocessing;
 using OfficeCli.Core.Diagram;
 
@@ -14,21 +15,26 @@ namespace OfficeCli.Handlers;
 
 public partial class WordHandler
 {
-    // A 'diagram' is an ADD-only synthesizer (like 'equation'): it parses
-    // mermaid text, lays out a graph via the shared format-agnostic engine
-    // (Core/Diagram), and expands into native, editable drawing shapes +
-    // connectors in the body. It is deliberately NOT a persistent element —
-    // after Add it is a set of ordinary <w:drawing> shapes, so it has no
-    // matching Set/Get/Query on a "diagram" node (documented exception to the
-    // Add-and-Set feature checklist). The parse + layout are shared with the
-    // pptx emitter; only this mapping onto docx DrawingML differs. The one
-    // format-specific concern vs pptx: docx has no slide to resize, so the
-    // diagram is scaled to fit the section's text-area width (never enlarged),
-    // and all shapes are floating anchors positioned relative to the margin.
+    // DiagramSpec has one semantic model and two editable renderers. The default
+    // expands into native Shape+Connector drawings; explicit render=smartart
+    // writes a persistent native SmartArt data model that smartart inspect/update
+    // can round-trip. Legacy Mermaid input remains an adapter to the shape or
+    // image paths. Word-specific sizing still fits the section text area.
     private const double DiagramCmToEmu = 360000.0;
 
     private string AddDiagram(OpenXmlElement parent, string parentPath, int? index, Dictionary<string, string> properties)
     {
+        var specPath = properties.GetValueOrDefault("spec") ?? properties.GetValueOrDefault("diagramSpec");
+        if (!string.IsNullOrWhiteSpace(specPath))
+        {
+            var spec = DiagramSpec.Load(specPath);
+            var specRenderer = (properties.GetValueOrDefault("render") ?? "native").Trim().ToLowerInvariant();
+            if (specRenderer is "smartart" or "native-smartart")
+                return AddDiagramSmartArt(parent, parentPath, index, properties, spec);
+            var theme = DiagramTheme.Load(properties.GetValueOrDefault("themeFile"));
+            return AddDiagramNative(parent, parentPath, index, properties, DiagramCompiler.Compile(spec), theme);
+        }
+
         // Input mirrors `equation` / the pptx diagram: canonical `mermaid`
         // (+ aliases text/dsl) inline, or `src`/`path` to a .mmd file.
         var mermaidText = properties.GetValueOrDefault("mermaid")
@@ -62,10 +68,62 @@ public partial class WordHandler
         return AddDiagramNative(parent, parentPath, index, properties, mermaidText);
     }
 
+    private string AddDiagramSmartArt(OpenXmlElement parent, string parentPath, int? index,
+                                      Dictionary<string, string> properties, DiagramSpec spec)
+    {
+        var theme = DiagramTheme.Load(properties.GetValueOrDefault("themeFile"));
+        var (host, hostRoot) = ResolveDrawingHost(parent, parentPath);
+        var hostPart = ResolveImageHostPart(parent);
+        var dataPart = hostPart.AddNewPart<DiagramDataPart>();
+        var layoutPart = hostPart.AddNewPart<DiagramLayoutDefinitionPart>();
+        var colorsPart = hostPart.AddNewPart<DiagramColorsPart>();
+        var stylePart = hostPart.AddNewPart<DiagramStylePart>();
+        WriteNativeSmartArtPart(dataPart, NativeSmartArtCodec.BuildDataXml(spec));
+        WriteNativeSmartArtPart(layoutPart, NativeSmartArtCodec.BuildLayoutXml());
+        WriteNativeSmartArtPart(colorsPart, NativeSmartArtCodec.BuildColorsXml(theme));
+        WriteNativeSmartArtPart(stylePart, NativeSmartArtCodec.BuildStyleXml(theme));
+
+        var dm = hostPart.GetIdOfPart(dataPart);
+        var lo = hostPart.GetIdOfPart(layoutPart);
+        var cs = hostPart.GetIdOfPart(colorsPart);
+        var qs = hostPart.GetIdOfPart(stylePart);
+        long width = properties.TryGetValue("width", out var widthText)
+            ? ParseEmu(widthText)
+            : (long)Math.Round(SectionContentWidthCm() * DiagramCmToEmu);
+        long height = properties.TryGetValue("height", out var heightText)
+            ? ParseEmu(heightText)
+            : Math.Min((long)Math.Round(width * 0.62), 6 * 360000L);
+        uint docPropId = NextDocPropId();
+        var name = SecurityElement.Escape(string.IsNullOrWhiteSpace(spec.Title) ? $"SmartArt {spec.DiagramId}" : spec.Title);
+        var description = SecurityElement.Escape("DiagramId:" + spec.DiagramId
+            + ";DiagramRenderer:SmartArt;DiagramFactRefs:"
+            + string.Join(',', spec.Facts.Select(f => f.FactId)));
+        var drawingXml = $@"<w:drawing xmlns:w=""http://schemas.openxmlformats.org/wordprocessingml/2006/main"" xmlns:wp=""http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"" xmlns:a=""http://schemas.openxmlformats.org/drawingml/2006/main"" xmlns:dgm=""http://schemas.openxmlformats.org/drawingml/2006/diagram"" xmlns:r=""http://schemas.openxmlformats.org/officeDocument/2006/relationships""><wp:inline distT=""0"" distB=""0"" distL=""0"" distR=""0""><wp:extent cx=""{width}"" cy=""{height}""/><wp:effectExtent l=""0"" t=""0"" r=""0"" b=""0""/><wp:docPr id=""{docPropId}"" name=""{name}"" descr=""{description}""/><wp:cNvGraphicFramePr/><a:graphic><a:graphicData uri=""http://schemas.openxmlformats.org/drawingml/2006/diagram""><dgm:relIds r:dm=""{dm}"" r:lo=""{lo}"" r:cs=""{cs}"" r:qs=""{qs}""/></a:graphicData></a:graphic></wp:inline></w:drawing>";
+
+        var para = new Paragraph(new Run(ParseDrawingFromXml(drawingXml)));
+        AssignParaId(para);
+        InsertAtIndexOrAppend(host, para, index);
+        int count = host.Descendants<Drawing>().Count(d => d.Descendants().Any(e =>
+            e.LocalName == "relIds" && e.NamespaceUri == "http://schemas.openxmlformats.org/drawingml/2006/diagram"));
+        return $"{hostRoot}/smartart[{count}]";
+    }
+
+    private static void WriteNativeSmartArtPart(OpenXmlPart part, string xml)
+    {
+        using var stream = part.GetStream(FileMode.Create, FileAccess.Write);
+        using var writer = new StreamWriter(stream, new UTF8Encoding(false));
+        writer.Write(xml);
+    }
+
     // Built-in synthesizer: mermaid → laid-out graph → native <w:drawing> shapes.
     private string AddDiagramNative(OpenXmlElement parent, string parentPath, int? index, Dictionary<string, string> properties, string mermaidText)
     {
-        var lo = DiagramCompiler.Compile(mermaidText);
+        return AddDiagramNative(parent, parentPath, index, properties, DiagramCompiler.Compile(mermaidText), DiagramTheme.Default);
+    }
+
+    private string AddDiagramNative(OpenXmlElement parent, string parentPath, int? index, Dictionary<string, string> properties,
+                                    LaidOutGraph lo, DiagramTheme theme)
+    {
         if (lo.Nodes.Count == 0)
             throw new ArgumentException("diagram parsed to zero nodes — check the mermaid syntax.");
 
@@ -91,14 +149,13 @@ public partial class WordHandler
             scale = natW > 0.01 ? Math.Min(1.0, contentCm / natW) : 1.0;
         }
         long Emu(double cm) => (long)Math.Round(cm * scale * DiagramCmToEmu);
-        // Font scales WITH the box (the layout sized every box to hold its text at
-        // the base point size, so any uniform scale keeps text fitting). Floor at 1
-        // only to avoid a 0pt run — a fixed higher floor (e.g. 6) forces the font
-        // LARGER than the shrunken box on a heavily fit-scaled wide diagram →
-        // overflow/mid-word wrap (the "text too big for the box" symptom). The node
-        // bodyPr's normAutofit shrinks further if a rounding edge still overflows.
-        int fontPt = Math.Max(1, (int)Math.Round(18 * lo.FontScale * scale));
-        int labelPt = Math.Max(1, (int)Math.Round(10 * scale));
+        // Word/WPS text boxes use page typography rather than PowerPoint's slide
+        // typography.  An 18pt slide label is too large for an A4 drawing even when
+        // the geometric box itself fits, and WPS does not consistently honour
+        // DrawingML normAutofit for wps text boxes.  Size Word runs conservatively
+        // up front; uniform fit scaling still applies for unusually wide diagrams.
+        int fontPt = Math.Max(1, (int)Math.Floor(11 * lo.FontScale * scale));
+        int labelPt = Math.Max(1, (int)Math.Floor(8 * scale));
 
         // Drawings aren't in the document yet, so NextDocPropId() would return the
         // same value for each; allocate one base and increment locally so every id
@@ -127,8 +184,7 @@ public partial class WordHandler
         var labelBoxes = lo.Labels
             .Select(lbl =>
             {
-                double lw = Math.Max(1.0, DiagramLabelWidthCm(lbl.Text));
-                return (lbl, x: Emu(lbl.Cx - lw / 2), y: Emu(lbl.Cy - 0.26), cx: Emu(lw), cy: Emu(0.52));
+                return (lbl, x: Emu(lbl.Cx - lbl.W / 2), y: Emu(lbl.Cy - lbl.H / 2), cx: Emu(lbl.W), cy: Emu(lbl.H));
             })
             .ToList();
 
@@ -143,27 +199,37 @@ public partial class WordHandler
 
         // Build the <wps:wsp> children in group-relative coordinates (off = abs − gMin).
         var kids = new StringBuilder();
+        var nodeShapeIds = new Dictionary<string, uint>(StringComparer.Ordinal);
         foreach (var b in nodeBoxes)
         {
-            var (geom, fill, line) = DiagramStyles.ByShape[b.n.Shape];
-            kids.Append(BuildDiagramNodeWsp(nextId++, geom, fill, line, b.n.Label, fontPt,
-                b.x - gMinX, b.y - gMinY, b.cx, b.cy));
+            var (geom, fill, line) = DiagramStyles.Resolve(b.n.Shape, theme);
+            var shapeId = nextId++;
+            nodeShapeIds[b.n.Id] = shapeId;
+            kids.Append(BuildDiagramNodeWsp(shapeId, geom, fill, line,
+                DiagramTextMetrics.WrappedText(b.n.Label, Math.Max(0.8, b.n.W - 0.6)), fontPt,
+                b.x - gMinX, b.y - gMinY, b.cx, b.cy, factRefs: b.n.FactRefs, diagramId: lo.DiagramId,
+                latinFont: theme.MinorLatinFont, eastAsiaFont: theme.MinorEastAsiaFont));
         }
         foreach (var b in edgeBoxes)
-            kids.Append(BuildDiagramEdgeWsp(nextId++, b.e.Points, b.e.ArrowAtEnd, b.e.Dashed, Emu,
-                b.minX, b.minY, b.w, b.h, gMinX, gMinY));
+            kids.Append(BuildDiagramEdgeWsp(nextId++, b.e.Points, b.e.ArrowAtEnd, b.e.Dashed, theme.MutedText, b.e.FactRefs, Emu,
+                b.minX, b.minY, b.w, b.h, gMinX, gMinY, lo.DiagramId,
+                b.e.SourceNodeId is not null && nodeShapeIds.TryGetValue(b.e.SourceNodeId, out var source) ? source : null,
+                b.e.TargetNodeId is not null && nodeShapeIds.TryGetValue(b.e.TargetNodeId, out var target) ? target : null,
+                b.e.StartConnectionIndex, b.e.EndConnectionIndex));
         foreach (var b in labelBoxes)
             // Opaque (flowchart) labels mask the edge line; sequence labels sit in
             // empty space → no fill, so they don't break the lifeline they cross.
-            kids.Append(BuildDiagramNodeWsp(nextId++, "rect", b.lbl.Opaque ? "FFFFFF" : null, null, b.lbl.Text, labelPt,
-                b.x - gMinX, b.y - gMinY, b.cx, b.cy, label: true));
+            kids.Append(BuildDiagramNodeWsp(nextId++, "rect", b.lbl.Opaque ? "FFFFFF" : null, null,
+                DiagramTextMetrics.WrappedText(b.lbl.Text, Math.Max(0.6, b.lbl.W - 0.3)), labelPt,
+                b.x - gMinX, b.y - gMinY, b.cx, b.cy, label: true, diagramId: lo.DiagramId,
+                latinFont: theme.MinorLatinFont, eastAsiaFont: theme.MinorEastAsiaFont));
 
         // ONE drawing: a wpg group wrapping every child, anchored at the group's
         // top-left (margin-relative). chOff/chExt == off/ext so children keep the
         // coordinates computed above; a later `set width/height` on the group
         // scales them via that baseline (mirrors the pptx group wrapper), so the
         // whole diagram stays adjustable as a unit after Add.
-        string groupXml = BuildDiagramGroupDrawing(nextId++, gMinX, gMinY, gW, gH, kids.ToString());
+        string groupXml = BuildDiagramGroupDrawing(nextId++, gMinX, gMinY, gW, gH, kids.ToString(), lo.DiagramId);
         var para = new Paragraph();
         para.AppendChild(new Run(ParseDrawingFromXml(groupXml)));
         AssignParaId(para);
@@ -292,7 +358,8 @@ public partial class WordHandler
     // off/ext → children keep the absolute-within-group coordinates they were
     // built with; a later `set width/height` shrinks ext while chExt stays the
     // baseline, so Word scales the children (same model as the pptx group).
-    private static string BuildDiagramGroupDrawing(uint groupId, long posX, long posY, long cx, long cy, string childrenXml)
+    private static string BuildDiagramGroupDrawing(uint groupId, long posX, long posY, long cx, long cy, string childrenXml,
+                                                   string? diagramId)
     {
         return
             $"<w:drawing {DiagramNs}><wp:anchor distT=\"0\" distB=\"0\" distL=\"0\" distR=\"0\" simplePos=\"0\" " +
@@ -301,7 +368,7 @@ public partial class WordHandler
             $"<wp:positionH relativeFrom=\"margin\"><wp:posOffset>{posX}</wp:posOffset></wp:positionH>" +
             $"<wp:positionV relativeFrom=\"margin\"><wp:posOffset>{posY}</wp:posOffset></wp:positionV>" +
             $"<wp:extent cx=\"{cx}\" cy=\"{cy}\"/><wp:effectExtent l=\"0\" t=\"0\" r=\"0\" b=\"0\"/><wp:wrapNone/>" +
-            $"<wp:docPr id=\"{groupId}\" name=\"Diagram {groupId}\"/>" +
+            $"<wp:docPr id=\"{groupId}\" name=\"Diagram {groupId}\" descr=\"{SecurityElement.Escape(DiagramMetadata(diagramId, null))}\"/>" +
             "<wp:cNvGraphicFramePr/>" +
             "<a:graphic><a:graphicData uri=\"http://schemas.microsoft.com/office/word/2010/wordprocessingGroup\">" +
             "<wpg:wgp><wpg:cNvGrpSpPr/><wpg:grpSpPr>" +
@@ -316,7 +383,9 @@ public partial class WordHandler
     // the enclosing group owns placement.
     private static string BuildDiagramNodeWsp(uint id, string preset, string? fill, string? line,
                                               string text, int fontPt, long x, long y, long cx, long cy,
-                                              bool label = false)
+                                              bool label = false, IReadOnlyList<string>? factRefs = null,
+                                              string? diagramId = null, string? latinFont = null,
+                                              string? eastAsiaFont = null)
     {
         string fillXml = string.IsNullOrEmpty(fill)
             ? "<a:noFill/>"
@@ -328,22 +397,27 @@ public partial class WordHandler
         // rFonts with an eastAsia slot so Word resolves CJK glyphs. Without it a
         // textbox run inherits the Latin default (Calibri) and East-Asian text can
         // render blank; PowerPoint auto-applies the theme's CJK font, Word doesn't.
-        const string rFonts = "<w:rFonts w:eastAsia=\"SimSun\" w:hint=\"eastAsia\"/>";
+        string rFonts = $"<w:rFonts w:ascii=\"{SecurityElement.Escape(latinFont ?? "Aptos")}\" w:hAnsi=\"{SecurityElement.Escape(latinFont ?? "Aptos")}\" w:eastAsia=\"{SecurityElement.Escape(eastAsiaFont ?? "Microsoft YaHei")}\" w:hint=\"eastAsia\"/>";
+        string textXml = string.Join("<w:br/>",
+            text.Replace("\r", "", StringComparison.Ordinal).Split('\n')
+                .Select(line => $"<w:t xml:space=\"preserve\">{SecurityElement.Escape(line)}</w:t>"));
         string txbx =
-            "<wps:txbx><w:txbxContent><w:p><w:pPr><w:jc w:val=\"center\"/></w:pPr>" +
+            "<wps:txbx><w:txbxContent><w:p><w:pPr>" +
+            "<w:spacing w:before=\"0\" w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/>" +
+            "<w:jc w:val=\"center\"/></w:pPr>" +
             $"<w:r><w:rPr>{rFonts}<w:sz w:val=\"{szHalfPt}\"/><w:szCs w:val=\"{szHalfPt}\"/></w:rPr>" +
-            $"<w:t xml:space=\"preserve\">{SecurityElement.Escape(text)}</w:t></w:r></w:p></w:txbxContent></wps:txbx>";
+            $"{textXml}</w:r></w:p></w:txbxContent></wps:txbx>";
         // Zero the text insets. Word's default insets (~0.25cm L/R, ~0.13cm T/B)
         // are fixed EMU, not scaled — on a fit-shrunk node box (~1cm wide) they
         // eat over half the width, forcing the text to wrap and clip (looks like
         // "font too big for the box"). The layout already bakes visual padding
         // into the box size. Labels: single-line no-wrap; nodes: wrap + normAutofit.
-        string bodyPr = label
-            ? "<wps:bodyPr rot=\"0\" wrap=\"none\" lIns=\"0\" tIns=\"0\" rIns=\"0\" bIns=\"0\" anchor=\"ctr\" anchorCtr=\"1\"><a:noAutofit/></wps:bodyPr>"
-            : "<wps:bodyPr rot=\"0\" lIns=\"0\" tIns=\"0\" rIns=\"0\" bIns=\"0\" anchor=\"ctr\" anchorCtr=\"0\"><a:normAutofit/></wps:bodyPr>";
+        string bodyPr = $"<wps:bodyPr rot=\"0\" wrap=\"square\" lIns=\"0\" tIns=\"0\" rIns=\"0\" bIns=\"0\" anchor=\"ctr\" anchorCtr=\"{(label ? 1 : 0)}\"><a:normAutofit/></wps:bodyPr>";
         string nm = label ? "DiagramLabel" : "DiagramShape";
+        string metadata = DiagramMetadata(diagramId, factRefs);
+        string descr = metadata.Length > 0 ? $" descr=\"{SecurityElement.Escape(metadata)}\"" : "";
         return
-            $"<wps:wsp><wps:cNvPr id=\"{id}\" name=\"{nm} {id}\"/><wps:cNvSpPr/><wps:spPr>" +
+            $"<wps:wsp><wps:cNvPr id=\"{id}\" name=\"{nm} {id}\"{descr}/><wps:cNvSpPr/><wps:spPr>" +
             $"<a:xfrm><a:off x=\"{x}\" y=\"{y}\"/><a:ext cx=\"{cx}\" cy=\"{cy}\"/></a:xfrm>" +
             $"<a:prstGeom prst=\"{preset}\"><a:avLst/></a:prstGeom>{fillXml}{lnXml}</wps:spPr>" +
             $"{txbx}{bodyPr}</wps:wsp>";
@@ -353,9 +427,11 @@ public partial class WordHandler
     // its own box, positioned at (absMinX−groupMinX, absMinY−groupMinY) in the
     // group's child coordinate space.
     private static string BuildDiagramEdgeWsp(uint id, IReadOnlyList<Pt> points,
-                                              bool arrowAtEnd, bool dashed, Func<double, long> emu,
+                                              bool arrowAtEnd, bool dashed, string edgeColor, IReadOnlyList<string>? factRefs, Func<double, long> emu,
                                               long absMinX, long absMinY, long w, long h,
-                                              long groupMinX, long groupMinY)
+                                              long groupMinX, long groupMinY, string? diagramId,
+                                              uint? sourceShapeId, uint? targetShapeId,
+                                              uint startConnectionIndex, uint endConnectionIndex)
     {
         var path = new StringBuilder();
         for (int i = 0; i < points.Count; i++)
@@ -367,14 +443,26 @@ public partial class WordHandler
         }
         string dash = dashed ? "<a:prstDash val=\"dash\"/>" : "";
         string arrow = arrowAtEnd ? "<a:tailEnd type=\"triangle\"/>" : "";
-        string ln = $"<a:ln w=\"12700\" cap=\"flat\"><a:solidFill><a:srgbClr val=\"{DiagramStyles.EdgeColor}\"/></a:solidFill>{dash}<a:round/>{arrow}</a:ln>";
+        string ln = $"<a:ln w=\"12700\" cap=\"flat\"><a:solidFill><a:srgbClr val=\"{edgeColor}\"/></a:solidFill>{dash}<a:round/>{arrow}</a:ln>";
         string custGeom =
             $"<a:custGeom><a:avLst/><a:gdLst/><a:ahLst/><a:cxnLst/><a:rect l=\"0\" t=\"0\" r=\"{w}\" b=\"{h}\"/>" +
             $"<a:pathLst><a:path w=\"{w}\" h=\"{h}\">{path}</a:path></a:pathLst></a:custGeom>";
+        string metadata = DiagramMetadata(diagramId, factRefs);
+        string descr = metadata.Length > 0 ? $" descr=\"{SecurityElement.Escape(metadata)}\"" : "";
+        string connections = (sourceShapeId is null ? "" : $"<a:stCxn id=\"{sourceShapeId}\" idx=\"{startConnectionIndex}\"/>")
+            + (targetShapeId is null ? "" : $"<a:endCxn id=\"{targetShapeId}\" idx=\"{endConnectionIndex}\"/>");
         return
-            $"<wps:wsp><wps:cNvPr id=\"{id}\" name=\"DiagramEdge {id}\"/><wps:cNvSpPr/><wps:spPr>" +
+            $"<wps:wsp><wps:cNvPr id=\"{id}\" name=\"DiagramEdge {id}\"{descr}/><wps:cNvCnPr>{connections}</wps:cNvCnPr><wps:spPr>" +
             $"<a:xfrm><a:off x=\"{absMinX - groupMinX}\" y=\"{absMinY - groupMinY}\"/><a:ext cx=\"{w}\" cy=\"{h}\"/></a:xfrm>" +
             $"{custGeom}<a:noFill/>{ln}</wps:spPr><wps:bodyPr/></wps:wsp>";
+    }
+
+    private static string DiagramMetadata(string? diagramId, IReadOnlyList<string>? factRefs)
+    {
+        var fields = new List<string>();
+        if (!string.IsNullOrWhiteSpace(diagramId)) fields.Add("DiagramId:" + diagramId);
+        if (factRefs is { Count: > 0 }) fields.Add("DiagramFactRefs:" + string.Join(",", factRefs));
+        return string.Join(";", fields);
     }
 
     private static double DiagramLabelWidthCm(string text)
