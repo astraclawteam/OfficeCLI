@@ -223,6 +223,34 @@ public sealed class P1RegressionTests
     }
 
     [Fact]
+    public void ExcelPrintPreviewHonorsDeclaredPrintAreaInsteadOfDistantEvidenceCell()
+    {
+        using var temp = new TempDirectory();
+        var path = temp.File("print-area-preview.xlsx");
+        OpenXmlFixture.CreateWorkbook(path, "Dashboard");
+        using (var doc = SpreadsheetDocument.Open(path, true))
+        {
+            var sheetData = doc.WorkbookPart!.WorksheetParts.Single().Worksheet.GetFirstChild<SheetData>()!;
+            sheetData.Append(
+                new Row(new Cell { CellReference = "A1", DataType = CellValues.String, CellValue = new CellValue("看板") }) { RowIndex = 1 },
+                new Row(new Cell { CellReference = "Z100", DataType = CellValues.String, CellValue = new CellValue("内部证据") }) { RowIndex = 100 });
+            doc.WorkbookPart.Workbook.DefinedNames ??= new DefinedNames();
+            doc.WorkbookPart.Workbook.DefinedNames.Append(new DefinedName("'Dashboard'!$A$1:$M$20")
+            {
+                Name = "_xlnm.Print_Area", LocalSheetId = 0U,
+            });
+            doc.WorkbookPart.WorksheetParts.Single().Worksheet.Save();
+            doc.WorkbookPart.Workbook.Save();
+        }
+
+        using var handler = new ExcelHandler(path, editable: false);
+        var html = handler.ViewAsHtml("print-area");
+        Assert.Contains("看板", html);
+        Assert.DoesNotContain("内部证据", html);
+        Assert.DoesNotContain("data-path=\"/Dashboard/Z100\"", html);
+    }
+
+    [Fact]
     public void TrackedReplaceCanDeleteACompleteHyperlink_Issue279()
     {
         using var temp = new TempDirectory();

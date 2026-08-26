@@ -9,6 +9,32 @@ namespace OfficeCli.Tests;
 
 public sealed class DiagramSpecTests
 {
+    [Fact]
+    public void DiagramNodeTextUsesAccessibleContrastAndPortableLatinFont()
+    {
+        var theme = new DiagramTheme { Text = "000000", Accent = "7C3AED" };
+        Assert.Equal("FFFFFF", DiagramStyles.TextColorFor(theme.Accent, theme));
+        Assert.Equal("Arial", DiagramTheme.Default.MinorLatinFont);
+    }
+
+    [Fact]
+    public void NativeConnectorGeometryOverlapsAttachedNodeBoundaries()
+    {
+        var edge = new RoutedEdge
+        {
+            SourceNodeId = "source",
+            TargetNodeId = "target",
+            Points = new List<Pt> { new(2, 1), new(2, 3), new(2, 5) },
+        };
+
+        var anchors = PowerPointHandler.NativeConnectorAnchorPoints(edge);
+
+        Assert.Equal(2, anchors.X1, 6);
+        Assert.Equal(0.92, anchors.Y1, 6);
+        Assert.Equal(2, anchors.X2, 6);
+        Assert.Equal(5.08, anchors.Y2, 6);
+    }
+
     private static string CompactDiagramText(string text) =>
         string.Concat(text.Where(character => !char.IsWhiteSpace(character)));
 
