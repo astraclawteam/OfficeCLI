@@ -47,6 +47,13 @@ public class ChartSemanticInspectorTests
     }
 
     [Fact]
+    public void DetectsTypedBulletInheritedFromBodyPlaceholder()
+    {
+        var paragraph = new Paragraph(new Run(new Text("• 重复项目符号")));
+        Assert.True(PresentationSemanticInspector.HasDuplicateBullet(paragraph, out _, inheritsPlaceholderBullet: true));
+    }
+
+    [Fact]
     public void DetectsTimePeriodsUsedAsSeriesAndMeasuresUsedAsCategories()
     {
         C.BarChartSeries MakeSeries(uint index, string name, params double[] values)
@@ -98,5 +105,49 @@ public class ChartSemanticInspectorTests
 
         valueAxis.NumberingFormat = new C.NumberingFormat { FormatCode = "0.0,,\"M\"", SourceLinked = false };
         Assert.DoesNotContain(ChartSemanticInspector.Inspect(space), item => item.Subtype == IssueSubtypes.ChartAxisLabelDensity);
+    }
+
+    [Fact]
+    public void DetectsHeaderValuesMixedIntoChartRanges()
+    {
+        C.LineChartSeries MakeSeries(uint index, string name, string categoryYear, string categoryValue,
+                                     string valueYear, string valueAmount)
+        {
+            return new C.LineChartSeries(
+                new C.Index { Val = index }, new C.Order { Val = index },
+                new C.SeriesText(new C.StringLiteral(
+                    new C.PointCount { Val = 1U },
+                    new C.StringPoint { Index = 0U, NumericValue = new C.NumericValue(name) })),
+                new C.CategoryAxisData(new C.NumberLiteral(
+                    new C.FormatCode("General"), new C.PointCount { Val = 2U },
+                    new C.NumericPoint { Index = 0U, NumericValue = new C.NumericValue(categoryYear) },
+                    new C.NumericPoint { Index = 1U, NumericValue = new C.NumericValue(categoryValue) })),
+                new C.Values(new C.NumberLiteral(
+                    new C.FormatCode("General"), new C.PointCount { Val = 2U },
+                    new C.NumericPoint { Index = 0U, NumericValue = new C.NumericValue(valueYear) },
+                    new C.NumericPoint { Index = 1U, NumericValue = new C.NumericValue(valueAmount) })));
+        }
+        var space = new C.ChartSpace(new C.Chart(new C.PlotArea(new C.LineChart(
+            MakeSeries(0U, "Series 1", "2026", "2000000", "2027", "3200000"),
+            MakeSeries(1U, "Series 2", "2026", "2000000", "2028", "5120000")))));
+
+        var findings = ChartSemanticInspector.Inspect(space);
+        Assert.Contains(findings, item => item.Subtype == IssueSubtypes.ChartSeriesNameMissing);
+        Assert.Contains(findings, item => item.Subtype == IssueSubtypes.ChartAxisSeriesSemantics);
+    }
+
+    [Fact]
+    public void FlagsOfficeOnlyLatinThemeFontsForCjkDecks()
+    {
+        var theme = new Theme(new ThemeElements(
+            new ColorScheme() { Name = "test" },
+            new FontScheme(
+                new MajorFont(new LatinFont { Typeface = "Calibri Light" }),
+                new MinorFont(new LatinFont { Typeface = "Calibri" })) { Name = "test" },
+            new FormatScheme() { Name = "test" }));
+
+        var risks = PresentationSemanticInspector.CrossSuiteFontRisks(theme, containsCjkText: true);
+        Assert.Equal(new[] { "Calibri", "Calibri Light" }, risks);
+        Assert.Empty(PresentationSemanticInspector.CrossSuiteFontRisks(theme, containsCjkText: false));
     }
 }
