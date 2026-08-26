@@ -19,9 +19,9 @@ public sealed class DiagramTheme
     public string Warning { get; init; } = "F59E0B";
     public string Accent { get; init; } = "8B5CF6";
     public string Danger { get; init; } = "EF4444";
-    public string MajorLatinFont { get; init; } = "Aptos Display";
+    public string MajorLatinFont { get; init; } = "Arial";
     public string MajorEastAsiaFont { get; init; } = "Microsoft YaHei";
-    public string MinorLatinFont { get; init; } = "Aptos";
+    public string MinorLatinFont { get; init; } = "Arial";
     public string MinorEastAsiaFont { get; init; } = "Microsoft YaHei";
 
     public static DiagramTheme Default { get; } = new();
@@ -58,9 +58,9 @@ public sealed class DiagramTheme
             Surface = C("lt2", "F3F6FA"), Primary = C("accent1", "2563EB"), Secondary = C("accent2", "0EA5E9"),
             Positive = C("accent3", "14B8A6"), Warning = C("accent4", "F59E0B"), Accent = C("accent5", "8B5CF6"),
             Danger = C("accent6", "EF4444"),
-            MajorLatinFont = F("majorLatin", "Aptos Display"),
+            MajorLatinFont = F("majorLatin", "Arial"),
             MajorEastAsiaFont = F("majorEastAsia", "Microsoft YaHei"),
-            MinorLatinFont = F("minorLatin", "Aptos"),
+            MinorLatinFont = F("minorLatin", "Arial"),
             MinorEastAsiaFont = F("minorEastAsia", "Microsoft YaHei"),
         };
     }

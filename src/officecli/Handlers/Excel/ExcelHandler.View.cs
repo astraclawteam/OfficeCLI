@@ -921,6 +921,7 @@ public partial class ExcelHandler
             {
                 Id = $"O{++issueNum}",
                 Type = IssueType.Format,
+                Subtype = Core.IssueSubtypes.TextOverflow,
                 Severity = IssueSeverity.Warning,
                 Path = path,
                 Message = msg

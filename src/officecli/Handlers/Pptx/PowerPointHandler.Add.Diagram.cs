@@ -214,12 +214,13 @@ public partial class PowerPointHandler
         foreach (var n in lo.Nodes)
         {
             var (geom, fill, line) = DiagramStyles.Resolve(n.Shape, theme);
+            var textColor = DiagramStyles.TextColorFor(fill, theme);
             var shapeId = nextId++;
             nodeShapeIds[n.Id] = shapeId;
             group.AppendChild(BuildDiagramShape(shapeId, geom, fill, line,
                 DiagramTextMetrics.WrappedText(n.Label, Math.Max(0.8, n.W - 0.6)), fontPt,
                 Emu(TX(n.X)), Emu(TY(n.Y)), Emu(n.W * sc), Emu(n.H * sc), n.FactRefs, lo.DiagramId,
-                theme.MinorLatinFont, theme.MinorEastAsiaFont));
+                theme.MinorLatinFont, theme.MinorEastAsiaFont, textColor));
         }
 
         // One native connector per semantic edge.  Start/end connection references
@@ -229,10 +230,16 @@ public partial class PowerPointHandler
         foreach (var e in lo.Edges)
         {
             if (e.Points.Count < 2) continue;
-            var p1 = e.Points[0]; var p2 = e.Points[^1];
+            // Some Office-compatible renderers shorten an attached connector by
+            // one or two pixels at the shape boundary (most visible when two
+            // metrics enter the top point of a decision diamond).  Keep the real
+            // start/end connection references, but extend the deterministic
+            // geometry a small distance into each attached node so PPT/PDF/SVG
+            // previews all read as physically connected.
+            var (x1, y1, x2, y2) = NativeConnectorAnchorPoints(e);
             uint? sourceShapeId = e.SourceNodeId is not null && nodeShapeIds.TryGetValue(e.SourceNodeId, out var source) ? source : null;
             uint? targetShapeId = e.TargetNodeId is not null && nodeShapeIds.TryGetValue(e.TargetNodeId, out var target) ? target : null;
-            group.AppendChild(BuildDiagramConnector(nextId++, TX(p1.X), TY(p1.Y), TX(p2.X), TY(p2.Y),
+            group.AppendChild(BuildDiagramConnector(nextId++, TX(x1), TY(y1), TX(x2), TY(y2),
                 theme.MutedText, e.ArrowAtEnd, e.Dashed, e.FactRefs, lo.DiagramId,
                 sourceShapeId, targetShapeId, e.StartConnectionIndex, e.EndConnectionIndex,
                 e.Points.Count > 2));
@@ -249,7 +256,7 @@ public partial class PowerPointHandler
                 DiagramTextMetrics.WrappedText(lbl.Text, Math.Max(0.6, lbl.W - 0.3)),
                 Math.Max(1, (int)Math.Round(10 * sc)),
                 Emu(TX(lbl.Cx - w / 2)), Emu(TY(lbl.Cy - lbl.H / 2)), Emu(w * sc), Emu(lbl.H * sc), null,
-                lo.DiagramId, theme.MinorLatinFont, theme.MinorEastAsiaFont));
+                lo.DiagramId, theme.MinorLatinFont, theme.MinorEastAsiaFont, theme.Text));
         }
 
         shapeTree.AppendChild(group);
@@ -368,7 +375,8 @@ public partial class PowerPointHandler
 
     private Shape BuildDiagramShape(uint id, string geometry, string? fill, string? line, string text,
                                     int fontPt, long x, long y, long cx, long cy, IReadOnlyList<string>? factRefs,
-                                    string? diagramId = null, string? latinFont = null, string? eastAsiaFont = null)
+                                    string? diagramId = null, string? latinFont = null, string? eastAsiaFont = null,
+                                    string? textColor = null)
     {
         var shape = new Shape
         {
@@ -404,11 +412,43 @@ public partial class PowerPointHandler
                 new Drawing.ParagraphProperties { Alignment = Drawing.TextAlignmentTypeValues.Center },
                 new Drawing.Run(
                     new Drawing.RunProperties(
-                        new Drawing.LatinFont { Typeface = latinFont ?? "Aptos" },
+                        new Drawing.SolidFill(new Drawing.RgbColorModelHex { Val = textColor ?? "000000" }),
+                        new Drawing.LatinFont { Typeface = latinFont ?? "Arial" },
                         new Drawing.EastAsianFont { Typeface = eastAsiaFont ?? "Microsoft YaHei" })
                     { FontSize = fontPt * 100, Language = "zh-CN" },
                     new Drawing.Text(text))));
         return shape;
+    }
+
+    internal static (double X1, double Y1, double X2, double Y2) NativeConnectorAnchorPoints(
+        RoutedEdge edge, double overlapCm = 0.08)
+    {
+        if (edge.Points.Count < 2)
+            throw new ArgumentException("A connector requires at least two points.", nameof(edge));
+
+        var start = edge.Points[0];
+        var next = edge.Points[1];
+        var previous = edge.Points[^2];
+        var end = edge.Points[^1];
+
+        static Pt Move(Pt point, Pt toward, double amount)
+        {
+            var dx = toward.X - point.X;
+            var dy = toward.Y - point.Y;
+            var length = Math.Sqrt(dx * dx + dy * dy);
+            return length <= 1e-9
+                ? point
+                : new Pt(point.X + dx / length * amount, point.Y + dy / length * amount);
+        }
+
+        // Source interior is opposite the outgoing segment; target interior is
+        // beyond the incoming segment. Detached ends remain exact.
+        if (!string.IsNullOrWhiteSpace(edge.SourceNodeId))
+            start = Move(start, new Pt(start.X - (next.X - start.X), start.Y - (next.Y - start.Y)), overlapCm);
+        if (!string.IsNullOrWhiteSpace(edge.TargetNodeId))
+            end = Move(end, new Pt(end.X + (end.X - previous.X), end.Y + (end.Y - previous.Y)), overlapCm);
+
+        return (start.X, start.Y, end.X, end.Y);
     }
 
     private ConnectionShape BuildDiagramConnector(uint id, double x1, double y1, double x2, double y2,

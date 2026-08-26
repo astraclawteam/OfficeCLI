@@ -522,6 +522,7 @@ public partial class PowerPointHandler
         var slideSize = _doc.PresentationPart?.Presentation?.SlideSize;
         long slideW = (long)(slideSize?.Cx?.Value ?? 12192000);
         long slideH = (long)(slideSize?.Cy?.Value ?? 6858000);
+        var issueThemeColors = ResolveThemeColorMap();
 
         foreach (var slidePart in GetSlideParts())
         {
@@ -710,7 +711,19 @@ public partial class PowerPointHandler
                 });
             }
 
-            var shapes = shapeTree.Elements<Shape>().ToList();
+            // Include children of editable DiagramSpec groups. Inspecting only
+            // top-level shapes made an unreadable grouped diagram report zero
+            // issues even though Office and WPS rendered its child text.
+            var shapes = shapeTree.Descendants<Shape>().ToList();
+            string? slideBackgroundHex = null;
+            var slideBackgroundSolid = GetSlide(slidePart).CommonSlideData?.Background?
+                .BackgroundProperties?.GetFirstChild<Drawing.SolidFill>();
+            if (slideBackgroundSolid != null
+                && TryOpaqueRgbLuminance(ResolveFillColor(slideBackgroundSolid, issueThemeColors)
+                    ?? ReadColorFromFill(slideBackgroundSolid), out _, out var parsedSlideBackground))
+            {
+                slideBackgroundHex = parsedSlideBackground;
+            }
             // No "slide has no title" warning: PowerPoint does not require a
             // Title placeholder, free-form / chart-only / image-only slides
             // are legitimate, and the check has no actionable subtype or
@@ -728,14 +741,21 @@ public partial class PowerPointHandler
             // allBoxes[i] aligns with shapes[i] (paint order = document order). Used
             // by the occlusion check: a text box covered by a LATER opaque box reads
             // as hidden. w==0 marks a shape with no usable geometry (never overlaps).
-            var allBoxes = new List<(long x, long y, long w, long h, bool opaque)>();
+            var allBoxes = new List<(long x, long y, long w, long h, bool opaque, string? fillHex)>();
             foreach (var s in shapes)
             {
                 var sx = s.ShapeProperties?.Transform2D;
                 bool hasGeom = sx?.Offset?.X != null && sx.Offset.Y != null && sx.Extents?.Cx != null && sx.Extents.Cy != null;
                 long x = 0, y = 0, w = 0, h = 0;
                 if (hasGeom) { x = sx!.Offset!.X!.Value; y = sx.Offset.Y!.Value; w = sx.Extents!.Cx!.Value; h = sx.Extents.Cy!.Value; }
-                allBoxes.Add((x, y, w, h, hasGeom && IsOpaqueOccluder(s)));
+                var solid = s.ShapeProperties?.GetFirstChild<Drawing.SolidFill>();
+                string? solidHex = null;
+                if (solid != null && TryOpaqueRgbLuminance(ResolveFillColor(solid, issueThemeColors)
+                    ?? ReadColorFromFill(solid), out _, out var parsedHex))
+                {
+                    solidHex = parsedHex;
+                }
+                allBoxes.Add((x, y, w, h, hasGeom && IsOpaqueOccluder(s, issueThemeColors), solidHex));
 
                 var st = GetShapeText(s);
                 if (hasGeom && !string.IsNullOrWhiteSpace(st))
@@ -759,6 +779,7 @@ public partial class PowerPointHandler
                     {
                         Id = $"O{++issueNum}",
                         Type = IssueType.Format,
+                        Subtype = Core.IssueSubtypes.TextOverflow,
                         Severity = IssueSeverity.Warning,
                         Path = shapePath,
                         Message = overflow
@@ -798,6 +819,7 @@ public partial class PowerPointHandler
                             {
                                 Id = $"O{++issueNum}",
                                 Type = IssueType.Format,
+                                Subtype = Core.IssueSubtypes.OffSlideContent,
                                 Severity = IssueSeverity.Warning,
                                 Path = shapePath,
                                 Message = $"Text shape \"{offSnippet}\" extends {offWorst / 360000.0:F1}cm past slide {offEdge} edge"
@@ -823,6 +845,7 @@ public partial class PowerPointHandler
                                 {
                                     Id = $"O{++issueNum}",
                                     Type = IssueType.Format,
+                                    Subtype = Core.IssueSubtypes.OffSlideContent,
                                     Severity = IssueSeverity.Warning,
                                     Path = shapePath,
                                     Message = $"Container shape extends {offWorst / 360000.0:F1}cm past slide {offEdge} edge (clips \"{hostSnip}\")"
@@ -861,6 +884,7 @@ public partial class PowerPointHandler
                                 {
                                     Id = $"O{++issueNum}",
                                     Type = IssueType.Format,
+                                    Subtype = Core.IssueSubtypes.TextOcclusion,
                                     Severity = IssueSeverity.Warning,
                                     Path = shapePath,
                                     Message = $"Text \"{occSnip}\" is hidden behind overlapping shape {occPath}"
@@ -871,28 +895,72 @@ public partial class PowerPointHandler
                     }
                 }
 
-                // Low contrast: a shape with its OWN opaque dark solid fill that
-                // carries opaque dark text reads fine on a laptop and vanishes on
-                // projection. Declared-model only — the shape's explicit fill IS
-                // the backdrop for its own runs, so there is no z-order guesswork
-                // (unlike text over a fill=none box sitting on another shape). Scoped
-                // tight to keep false positives near zero: explicit srgbClr on BOTH
-                // fill and run (scheme / inherited colors skipped), translucent runs
-                // skipped (intentional ghost / watermark text), and any color carrying
-                // a +lumMod/+shade transform skipped (those shift brightness). Floor
-                // matches the SKILL contrast rule: fill < 30%, text < 80% brightness.
+                // Low contrast: use the shape's own fill, or the nearest earlier
+                // opaque solid that covers at least 80% of a transparent text box.
+                // The latter is a common branded-slide pattern: a full-slide dark
+                // rectangle plus independent text boxes. Inspecting only the text
+                // box fill made black text on deep blue report zero issues.
                 var fillSolid = shape.ShapeProperties?.GetFirstChild<Drawing.SolidFill>();
-                if (fillSolid != null
-                    && TryOpaqueRgbLuminance(ReadColorFromFill(fillSolid), out double fillLum, out _)
-                    && fillLum < 0.30 * 255)
+                string? backdropHex = null;
+                var hasUnknownExplicitBackdrop = false;
+                if (fillSolid != null && TryOpaqueRgbLuminance(ResolveFillColor(fillSolid, issueThemeColors)
+                    ?? ReadColorFromFill(fillSolid), out _, out var ownHex))
+                {
+                    backdropHex = ownHex;
+                }
+                else if (fillSolid != null)
+                {
+                    // An explicit but unresolved fill (for example a transformed
+                    // scheme colour) is not transparent. Do not compare its text
+                    // against a lower z-order card or slide background and create
+                    // a false low-contrast finding.
+                    hasUnknownExplicitBackdrop = true;
+                }
+                else if (!string.IsNullOrWhiteSpace(offText) && shapeIdx - 1 < allBoxes.Count)
+                {
+                    var textBox = allBoxes[shapeIdx - 1];
+                    var textArea = textBox.w * textBox.h;
+                    for (var backdropIndex = shapeIdx - 2; backdropIndex >= 0 && textArea > 0; backdropIndex--)
+                    {
+                        var candidate = allBoxes[backdropIndex];
+                        if (!candidate.opaque || candidate.fillHex == null) continue;
+                        var overlapWidth = Math.Min(textBox.x + textBox.w, candidate.x + candidate.w) - Math.Max(textBox.x, candidate.x);
+                        var overlapHeight = Math.Min(textBox.y + textBox.h, candidate.y + candidate.h) - Math.Max(textBox.y, candidate.y);
+                        if (overlapWidth <= 0 || overlapHeight <= 0 || overlapWidth * overlapHeight * 5 < textArea * 4) continue;
+                        backdropHex = candidate.fillHex;
+                        break;
+                    }
+                }
+                if (!hasUnknownExplicitBackdrop) backdropHex ??= slideBackgroundHex;
+                if (!hasUnknownExplicitBackdrop && backdropHex != null)
                 {
                     foreach (var run in shape.Descendants<Drawing.Run>())
                     {
                         if (run.Text?.Text is not { Length: > 0 }) continue;
                         var runSolid = run.RunProperties?.GetFirstChild<Drawing.SolidFill>();
-                        if (runSolid == null) continue;
-                        if (TryOpaqueRgbLuminance(ReadColorFromFill(runSolid), out double runLum, out string runHex)
-                            && runLum < 0.80 * 255)
+                        var paragraph = run.Ancestors<Drawing.Paragraph>().FirstOrDefault();
+                        runSolid ??= paragraph?.ParagraphProperties?.Descendants<Drawing.SolidFill>().FirstOrDefault();
+                        if (runSolid == null && paragraph != null)
+                        {
+                            var level = Math.Clamp((int)(paragraph.ParagraphProperties?.Level?.Value ?? 0), 0, 8) + 1;
+                            runSolid = shape.TextBody?.ListStyle?.ChildElements
+                                .FirstOrDefault(element => element.LocalName == $"lvl{level}pPr")
+                                ?.Descendants<Drawing.SolidFill>().FirstOrDefault();
+                        }
+                        double runLum = 0;
+                        string runHex = "000000";
+                        var hasExplicitTextColor = runSolid != null
+                            && TryOpaqueRgbLuminance(ResolveFillColor(runSolid, issueThemeColors)
+                                ?? ReadColorFromFill(runSolid), out runLum, out runHex);
+                        if (!hasExplicitTextColor)
+                        {
+                            // Standalone shapes with an explicit dark fill and no
+                            // text colour inherit black in Office and WPS.
+                            runLum = 0;
+                            runHex = "000000";
+                        }
+                        var contrastRatio = ContrastRatio(runHex, backdropHex);
+                        if (contrastRatio < 4.5)
                         {
                             issues.Add(new DocumentIssue
                             {
@@ -901,8 +969,8 @@ public partial class PowerPointHandler
                                 Subtype = Core.IssueSubtypes.LowContrast,
                                 Severity = IssueSeverity.Warning,
                                 Path = shapePath,
-                                Message = $"Low-contrast text #{runHex} on dark fill — unreadable on projection. "
-                                        + "Use FFFFFF or a color brighter than 80%."
+                                Message = $"Low-contrast text #{runHex} on background #{backdropHex} has ratio {contrastRatio:F2}:1. "
+                                        + "Use a text color with at least 4.5:1 contrast."
                             });
                             break; // one report per shape is enough
                         }
@@ -913,7 +981,7 @@ public partial class PowerPointHandler
                 foreach (var paragraph in shape.TextBody?.Elements<Drawing.Paragraph>() ?? Enumerable.Empty<Drawing.Paragraph>())
                 {
                     paragraphIndex++;
-                    if (!Core.PresentationSemanticInspector.HasDuplicateBullet(paragraph, out var bulletText)) continue;
+                    if (!Core.PresentationSemanticInspector.HasDuplicateBullet(paragraph, out var bulletText, shape.TextBody?.ListStyle)) continue;
                     issues.Add(new DocumentIssue
                     {
                         Id = $"B{++issueNum}", Type = IssueType.Format,
@@ -1063,13 +1131,14 @@ public partial class PowerPointHandler
     /// solid, and an absent (inherited) fill all return false so the occlusion
     /// check keeps its false-positive rate near zero.
     /// </summary>
-    private static bool IsOpaqueOccluder(Shape s)
+    private static bool IsOpaqueOccluder(Shape s, Dictionary<string, string> themeColors)
     {
         var sp = s.ShapeProperties;
         if (sp == null) return false;
         if (sp.GetFirstChild<Drawing.NoFill>() != null) return false;
         var solid = sp.GetFirstChild<Drawing.SolidFill>();
-        if (solid != null) return TryOpaqueRgbLuminance(ReadColorFromFill(solid), out _, out _);
+        if (solid != null) return TryOpaqueRgbLuminance(ResolveFillColor(solid, themeColors)
+            ?? ReadColorFromFill(solid), out _, out _);
         if (sp.GetFirstChild<Drawing.BlipFill>() != null) return true;
         if (sp.GetFirstChild<Drawing.PatternFill>() != null) return true;
         if (sp.GetFirstChild<Drawing.GradientFill>() != null) return true;
@@ -1106,5 +1175,22 @@ public partial class PowerPointHandler
         luminance = r * 0.299 + g * 0.587 + b * 0.114;
         hex6 = hex.ToUpperInvariant();
         return true;
+    }
+
+    private static double ContrastRatio(string foreground, string background)
+    {
+        static double RelativeLuminance(string hex)
+        {
+            static double Channel(string value)
+            {
+                var component = Convert.ToInt32(value, 16) / 255d;
+                return component <= 0.04045 ? component / 12.92 : Math.Pow((component + 0.055) / 1.055, 2.4);
+            }
+            return 0.2126 * Channel(hex[..2]) + 0.7152 * Channel(hex.Substring(2, 2)) + 0.0722 * Channel(hex.Substring(4, 2));
+        }
+
+        var first = RelativeLuminance(foreground);
+        var second = RelativeLuminance(background);
+        return (Math.Max(first, second) + 0.05) / (Math.Min(first, second) + 0.05);
     }
 }

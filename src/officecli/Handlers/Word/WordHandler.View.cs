@@ -1316,46 +1316,6 @@ public partial class WordHandler
                 });
             }
 
-            // Paragraph format checks
-            var pProps = para.ParagraphProperties;
-            if (pProps != null && IsNormalStyle(styleName))
-            {
-                var indent = pProps.Indentation;
-                // w:firstLineChars is the character-relative twin of w:firstLine
-                // (200 = 2 characters, exactly what the suggestion below asks
-                // for) and satisfies the check on its own — CJK documents carry
-                // the indent that way and never emit w:firstLine.
-                var hasFirstLineChars = indent?.FirstLineChars != null && indent.FirstLineChars.Value > 0;
-                if (!hasFirstLineChars && (indent?.FirstLine == null || indent.FirstLine.Value == "0"))
-                {
-                    // Skip paragraphs where first-line indent is not expected:
-                    // - hanging indent (e.g. bibliography entries)
-                    // - centered/right alignment (block-style formatting)
-                    // - list items (bullet/numbered)
-                    var hasHanging = indent?.Hanging != null && indent.Hanging.Value != "0";
-                    var hasHangingChars = indent?.HangingChars != null && indent.HangingChars.Value > 0;
-                    var jcVal = pProps.Justification?.Val?.Value;
-                    var isCentered = jcVal == JustificationValues.Center || jcVal == JustificationValues.Right
-                                  || jcVal == JustificationValues.Distribute;
-                    var isList = pProps.NumberingProperties != null;
-
-                    // Only flag if there's actual text and none of the skip conditions apply
-                    if (!hasHanging && !hasHangingChars && !isCentered && !isList
-                        && runs.Any(r => !string.IsNullOrWhiteSpace(GetRunText(r))))
-                    {
-                        issues.Add(new DocumentIssue
-                        {
-                            Id = $"F{++issueNum}",
-                            Type = IssueType.Format,
-                            Severity = IssueSeverity.Warning,
-                            Path = $"/body/{BuildParaPathSegment(para, lineNum + 1)}",
-                            Message = "Body paragraph missing first-line indent",
-                            Suggestion = "Set first-line indent to 2 characters"
-                        });
-                    }
-                }
-            }
-
             int runIdx = 0;
             foreach (var run in runs)
             {
@@ -1386,20 +1346,6 @@ public partial class WordHandler
                         Severity = IssueSeverity.Warning,
                         Path = $"/body/{BuildParaPathSegment(para, lineNum + 1)}/r[{runIdx + 1}]",
                         Message = "Duplicate punctuation",
-                        Context = text
-                    });
-                }
-
-                // Mixed Chinese/English punctuation
-                if (HasMixedPunctuation(text))
-                {
-                    issues.Add(new DocumentIssue
-                    {
-                        Id = $"C{++issueNum}",
-                        Type = IssueType.Content,
-                        Severity = IssueSeverity.Info,
-                        Path = $"/body/{BuildParaPathSegment(para, lineNum + 1)}/r[{runIdx + 1}]",
-                        Message = "Mixed CJK/Latin punctuation",
                         Context = text
                     });
                 }

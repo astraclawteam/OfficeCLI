@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 using System.Collections.Generic;
+using System.Globalization;
 
 namespace OfficeCli.Core.Diagram;
 
@@ -44,5 +45,41 @@ public static class DiagramStyles
             FlowShape.Database => (geometry, theme.Accent, theme.MutedText),
             _ => (geometry, theme.Surface, theme.Primary),
         };
+    }
+
+    /// <summary>
+    /// Select a deterministic text colour with WCAG AA contrast against the
+    /// node fill.  Native Office and SVG renderers share this decision so a
+    /// dark branded node cannot silently inherit black host-default text.
+    /// </summary>
+    public static string TextColorFor(string fill, DiagramTheme theme)
+    {
+        var preferred = Normalize(theme.Text);
+        var background = Normalize(fill);
+        if (Contrast(preferred, background) >= 4.5) return preferred;
+        return Contrast("FFFFFF", background) >= Contrast("000000", background) ? "FFFFFF" : "000000";
+    }
+
+    private static string Normalize(string value)
+    {
+        var normalized = value.Trim().TrimStart('#');
+        return normalized.Length == 6 ? normalized.ToUpperInvariant() : "000000";
+    }
+
+    private static double Contrast(string foreground, string background)
+    {
+        var lighter = Math.Max(RelativeLuminance(foreground), RelativeLuminance(background));
+        var darker = Math.Min(RelativeLuminance(foreground), RelativeLuminance(background));
+        return (lighter + 0.05) / (darker + 0.05);
+    }
+
+    private static double RelativeLuminance(string hex)
+    {
+        static double Channel(string value)
+        {
+            var component = int.Parse(value, NumberStyles.HexNumber, CultureInfo.InvariantCulture) / 255d;
+            return component <= 0.04045 ? component / 12.92 : Math.Pow((component + 0.055) / 1.055, 2.4);
+        }
+        return 0.2126 * Channel(hex[..2]) + 0.7152 * Channel(hex.Substring(2, 2)) + 0.0722 * Channel(hex.Substring(4, 2));
     }
 }

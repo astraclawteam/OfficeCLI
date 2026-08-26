@@ -37,10 +37,11 @@ public static class DiagramSvgRenderer
         foreach (var node in graph.Nodes)
         {
             var style = DiagramStyles.Resolve(node.Shape, theme);
+            var textColor = DiagramStyles.TextColorFor(style.Fill, theme);
             var factRefs = nodeSpecs.TryGetValue(node.Id, out var nodeSpec) ? string.Join(" ", nodeSpec.FactRefs) : "";
             builder.Append($"<g id=\"node-{E(node.Id)}\" data-node-id=\"{E(node.Id)}\" data-fact-refs=\"{E(factRefs)}\">");
             AppendShape(builder, node, style.Fill, style.Line, N);
-            AppendText(builder, node.Label, node.X + node.W / 2, node.Y + node.H / 2, node.W, theme.Text,
+            AppendText(builder, node.Label, node.X + node.W / 2, node.Y + node.H / 2, node.W, textColor,
                 theme.MinorLatinFont, theme.MinorEastAsiaFont, 0.42, N, E);
             builder.Append("</g>");
         }

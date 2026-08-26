@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 using DocumentFormat.OpenXml;
+using System.Globalization;
 using C = DocumentFormat.OpenXml.Drawing.Charts;
 
 namespace OfficeCli.Core;
@@ -54,8 +55,79 @@ internal static class ChartSemanticInspector
                     $"Add {expected} to the value-axis title, chart title or series label so readers cannot misinterpret the scale."));
             }
         }
+        var valueAxis = plotArea.GetFirstChild<C.ValueAxis>();
+        var axisFormat = valueAxis?.GetFirstChild<C.NumberingFormat>()?.FormatCode?.Value ?? "";
+        var maximumMagnitude = series.Select(MaxAbsoluteValue).DefaultIfEmpty(0d).Max();
+        if (maximumMagnitude >= 10_000_000d && !UsesCompactAxisLabels(valueAxis, axisFormat))
+        {
+            findings.Add(new(
+                IssueSubtypes.ChartAxisLabelDensity,
+                $"The value axis renders values up to {maximumMagnitude.ToString("0", CultureInfo.InvariantCulture)} without compact display units, which can clip or crowd multi-digit labels.",
+                "Use a millions/billions display unit or a scaled axis number format such as 0.0,,\"M\", and state the unit in the chart or axis title."));
+        }
+        var seriesNames = series.Select(SeriesName).Where(value => value.Length > 0).ToList();
+        var categories = series.Select(SeriesCategories).FirstOrDefault(values => values.Count > 0) ?? new List<string>();
+        if (seriesNames.Count >= 2 && categories.Count >= 2
+            && Majority(seriesNames, IsTimeCategory) && Majority(categories, IsBusinessMeasure))
+        {
+            findings.Add(new(
+                IssueSubtypes.ChartAxisSeriesSemantics,
+                "Chart series look like time periods while the category axis looks like business measures; the category and series roles are probably transposed.",
+                "Use time periods on the category axis and business measures (such as revenue, cost, budget or profit) as named series, then verify the source ranges."));
+        }
         return findings;
     }
+
+    private static string SeriesName(OpenXmlCompositeElement series)
+        => series.Elements<OpenXmlCompositeElement>().FirstOrDefault(element => element.LocalName == "tx")?
+            .Descendants<OpenXmlElement>().FirstOrDefault(element => element.LocalName == "v")?.InnerText.Trim() ?? "";
+
+    private static List<string> SeriesCategories(OpenXmlCompositeElement series)
+    {
+        var data = series.Elements<OpenXmlCompositeElement>().FirstOrDefault(element => element.LocalName is "cat" or "xVal");
+        if (data == null) return new();
+        return data.Descendants<OpenXmlElement>()
+            .Where(element => element.LocalName == "pt")
+            .Select(point => point.Descendants<OpenXmlElement>().FirstOrDefault(element => element.LocalName == "v")?.InnerText.Trim() ?? "")
+            .Where(value => value.Length > 0).ToList();
+    }
+
+    private static bool Majority(IReadOnlyList<string> values, Func<string, bool> predicate)
+        => values.Count > 0 && values.Count(predicate) * 2 > values.Count;
+
+    private static bool IsTimeCategory(string value)
+    {
+        var normalized = value.Trim().ToLowerInvariant();
+        return System.Text.RegularExpressions.Regex.IsMatch(normalized,
+            @"^(?:20\d{2}(?:[-/.年](?:0?[1-9]|1[0-2])(?:月)?)?|q[1-4]|[一二三四1-4]季度|(?:0?[1-9]|1[0-2])月|jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)$");
+    }
+
+    private static bool IsBusinessMeasure(string value)
+    {
+        var normalized = value.Trim().ToLowerInvariant();
+        string[] terms = ["收入", "营收", "预算", "成本", "利润", "毛利", "费用", "金额", "销量", "订单", "实际", "目标", "完成率",
+            "revenue", "sales", "budget", "cost", "profit", "margin", "expense", "actual", "target", "amount", "rate"];
+        return terms.Any(normalized.Contains);
+    }
+
+    private static double MaxAbsoluteValue(OpenXmlCompositeElement series)
+    {
+        var values = series.Elements<OpenXmlCompositeElement>()
+            .FirstOrDefault(element => element.LocalName is "val" or "yVal" or "bubbleSize");
+        return values?.Descendants<OpenXmlElement>()
+            .Where(element => element.LocalName is "v" && double.TryParse(element.InnerText, NumberStyles.Float, CultureInfo.InvariantCulture, out _))
+            .Select(element => double.TryParse(element.InnerText, NumberStyles.Float, CultureInfo.InvariantCulture, out var value) ? Math.Abs(value) : 0d)
+            .DefaultIfEmpty(0d)
+            .Max() ?? 0d;
+    }
+
+    private static bool UsesCompactAxisLabels(C.ValueAxis? axis, string formatCode)
+        => axis?.GetFirstChild<C.DisplayUnits>() != null
+            || formatCode.Contains(",,", StringComparison.Ordinal)
+            || formatCode.Contains('万')
+            || formatCode.Contains('亿')
+            || formatCode.Contains("M", StringComparison.OrdinalIgnoreCase)
+            || formatCode.Contains("B", StringComparison.OrdinalIgnoreCase);
 
     private static int PointCount(OpenXmlCompositeElement? data)
     {

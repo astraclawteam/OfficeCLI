@@ -41,9 +41,14 @@ public static class IssueSubtypes
     /// skipped to keep false positives near zero. Format bucket, Warning.</summary>
     public const string LowContrast = "low_contrast";
     public const string DuplicateBullet = "duplicate_bullet";
+    public const string TextOverflow = "text_overflow";
+    public const string OffSlideContent = "off_slide_content";
+    public const string TextOcclusion = "text_occlusion";
     public const string ChartCategorySeriesMismatch = "chart_category_series_mismatch";
     public const string ChartSeriesNameMissing = "chart_series_name_missing";
     public const string ChartUnitMissing = "chart_unit_missing";
+    public const string ChartAxisLabelDensity = "chart_axis_label_density";
+    public const string ChartAxisSeriesSemantics = "chart_axis_series_semantics";
     public const string ExcelPrintLayout = "excel_print_layout";
     /// <summary>pptx-only, opt-in: deterministic slide layout checks that
     /// would be too opinionated for the default issue stream.</summary>
@@ -71,9 +76,10 @@ public static class IssueSubtypes
     {
         FormulaNotEvaluated, FormulaCacheStale, FormulaRefMissingSheet, FormulaEvalError,
         FieldNotEvaluated, FieldCacheStale,
-        SlideFieldNotEvaluated, NotesUnresolvedRid, LowContrast, DuplicateBullet, PptLayout,
+        SlideFieldNotEvaluated, NotesUnresolvedRid, LowContrast, DuplicateBullet,
+        TextOverflow, OffSlideContent, TextOcclusion, PptLayout,
         ChartSeriesRefMissingSheet, ChartCacheStale, ChartCategorySeriesMismatch,
-        ChartSeriesNameMissing, ChartUnitMissing,
+        ChartSeriesNameMissing, ChartUnitMissing, ChartAxisLabelDensity, ChartAxisSeriesSemantics,
         ExcelPrintLayout,
         DefinedNameBroken, DefinedNameTargetMissing,
         BrokenPartRef,
@@ -98,7 +104,7 @@ public static class IssueSubtypes
             + "Opt-in only (request by exact name; not included in --type content): "
             + string.Join(", ", OptInSubtypes) + ". "
             + "Subtypes are format-specific — formula_* / chart_* / definedname_* apply to xlsx, "
-            + "field_* to docx, chart_* to xlsx or pptx, slide_field_* / notes_unresolved_rid / broken_part_ref / low_contrast / duplicate_bullet / ppt_layout to pptx; requesting a subtype that does not apply to "
+            + "field_* to docx, chart_* to xlsx or pptx, slide_field_* / notes_unresolved_rid / broken_part_ref / low_contrast / duplicate_bullet / text_overflow / off_slide_content / text_occlusion / ppt_layout to pptx; requesting a subtype that does not apply to "
             + "the queried file returns count=0 (not an error). "
             + "All values are case-insensitive and surrounding whitespace is trimmed.";
     }

@@ -397,7 +397,7 @@ public partial class WordHandler
         // rFonts with an eastAsia slot so Word resolves CJK glyphs. Without it a
         // textbox run inherits the Latin default (Calibri) and East-Asian text can
         // render blank; PowerPoint auto-applies the theme's CJK font, Word doesn't.
-        string rFonts = $"<w:rFonts w:ascii=\"{SecurityElement.Escape(latinFont ?? "Aptos")}\" w:hAnsi=\"{SecurityElement.Escape(latinFont ?? "Aptos")}\" w:eastAsia=\"{SecurityElement.Escape(eastAsiaFont ?? "Microsoft YaHei")}\" w:hint=\"eastAsia\"/>";
+        string rFonts = $"<w:rFonts w:ascii=\"{SecurityElement.Escape(latinFont ?? "Arial")}\" w:hAnsi=\"{SecurityElement.Escape(latinFont ?? "Arial")}\" w:eastAsia=\"{SecurityElement.Escape(eastAsiaFont ?? "Microsoft YaHei")}\" w:hint=\"eastAsia\"/>";
         string textXml = string.Join("<w:br/>",
             text.Replace("\r", "", StringComparison.Ordinal).Split('\n')
                 .Select(line => $"<w:t xml:space=\"preserve\">{SecurityElement.Escape(line)}</w:t>"));

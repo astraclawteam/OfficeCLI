@@ -159,7 +159,8 @@ public partial class ExcelHandler
         // loops below.
         sheets = sheets.Where(s => !IsSheetHidden(s.Name)).ToList();
         if (sheets.Count == 0) sheets = GetWorksheets();
-        var requestedRange = TryParsePreviewRange(visibleRange, sheets.FirstOrDefault().Name);
+        var usePrintAreas = string.Equals(visibleRange, "print-area", StringComparison.OrdinalIgnoreCase);
+        var requestedRange = usePrintAreas ? null : TryParsePreviewRange(visibleRange, sheets.FirstOrDefault().Name);
         var wbStylesPart = _doc.WorkbookPart?.WorkbookStylesPart;
         var stylesheet = wbStylesPart?.Stylesheet;
 
@@ -245,9 +246,12 @@ public partial class ExcelHandler
                 charts.AddRange(pictures);
             var rangeMatchesSheet = requestedRange.HasValue
                 && requestedRange.Value.sheet.Equals(sheetName, StringComparison.OrdinalIgnoreCase);
+            var printArea = usePrintAreas ? GetPreviewPrintArea(sheetName) : null;
             RenderSheetTable(sb, sheetName, renderPart, stylesheet, renderStyles, charts, sheetIdx, showGridLines,
                 rangeMatchesSheet ? requestedRange!.Value.maxRow : 0,
-                rangeMatchesSheet ? requestedRange!.Value.maxCol : 0);
+                rangeMatchesSheet ? requestedRange!.Value.maxCol : 0,
+                printArea?.maxRow ?? 0,
+                printArea?.maxCol ?? 0);
             sb.AppendLine("</div>");
         }
         sb.AppendLine("</div>");
@@ -334,6 +338,18 @@ public partial class ExcelHandler
             Math.Max(ColumnNameToIndex(firstCol), ColumnNameToIndex(lastCol)));
     }
 
+    private (int maxRow, int maxCol)? GetPreviewPrintArea(string sheetName)
+    {
+        var sheetIndex = GetSheetIndex(sheetName);
+        if (sheetIndex < 0) return null;
+        var body = _doc.WorkbookPart?.Workbook?.DefinedNames?.Elements<DefinedName>()
+            .FirstOrDefault(item => item.Name?.Value == "_xlnm.Print_Area" && item.LocalSheetId?.Value == (uint)sheetIndex)?.Text;
+        if (string.IsNullOrWhiteSpace(body)) return null;
+        var firstArea = body.Split(',')[0].Trim().TrimStart('=').Replace("$", "", StringComparison.Ordinal);
+        var parsed = TryParsePreviewRange(firstArea, sheetName);
+        return parsed.HasValue ? (parsed.Value.maxRow, parsed.Value.maxCol) : null;
+    }
+
     /// <summary>
     /// Get the number of sheets (for watch notifications).
     /// </summary>
@@ -353,7 +369,7 @@ public partial class ExcelHandler
 
     private void RenderSheetTable(StringBuilder sb, string sheetName, WorksheetPart worksheetPart, Stylesheet? stylesheet, RenderStyleArrays renderStyles,
         List<(int fromRow, int toRow, int fromCol, int toCol, double colOffsetPt, string html)>? charts = null, int sheetIdx = 0,
-        bool showGridLines = true, int minimumRow = 0, int minimumCol = 0)
+        bool showGridLines = true, int minimumRow = 0, int minimumCol = 0, int maximumRow = 0, int maximumCol = 0)
     {
         var ws = GetSheet(worksheetPart);
         var sheetData = ws.GetFirstChild<SheetData>();
@@ -515,6 +531,8 @@ public partial class ExcelHandler
         // Column cap: >200 cols is unusable in a browser table regardless of rendering mode.
         // Row cap: default 5000; overridable via OnGetHtmlRowCap when the rendering backend
         // keeps DOM node count bounded independently of sheet size.
+        if (maximumRow > 0) maxRow = Math.Min(maxRow, maximumRow);
+        if (maximumCol > 0) maxCol = Math.Min(maxCol, maximumCol);
         var actualRow = maxRow;
         var actualCol = maxCol;
         maxRow = Math.Min(maxRow, GetHtmlRowCap());

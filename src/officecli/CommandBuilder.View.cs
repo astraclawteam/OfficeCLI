@@ -173,7 +173,7 @@ static partial class CommandBuilder
                         new OfficeCli.Core.Rendering.RenderOptions { StartPage = pStart, EndPage = pEnd });
                 }
                 else if (handler is OfficeCli.Handlers.ExcelHandler)
-                    html = RenderViaRegistry(handler, "xlsx", new OfficeCli.Core.Rendering.RenderOptions());
+                    html = RenderViaRegistry(handler, "xlsx", new OfficeCli.Core.Rendering.RenderOptions { CellRange = clipArg });
                 else if (handler is OfficeCli.Handlers.WordHandler)
                     html = RenderViaRegistry(handler, "docx",
                         new OfficeCli.Core.Rendering.RenderOptions { PageFilter = pageFilter });

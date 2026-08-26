@@ -288,8 +288,8 @@ internal static class OfficePackageEvidence
     {
         var fonts = new Dictionary<string, string>(StringComparer.Ordinal)
         {
-            ["majorLatin"] = "Aptos Display", ["majorEastAsia"] = "Microsoft YaHei",
-            ["minorLatin"] = "Aptos", ["minorEastAsia"] = "Microsoft YaHei",
+            ["majorLatin"] = "Arial", ["majorEastAsia"] = "Microsoft YaHei",
+            ["minorLatin"] = "Arial", ["minorEastAsia"] = "Microsoft YaHei",
         };
         if (string.IsNullOrWhiteSpace(xml)) return fonts;
         try
