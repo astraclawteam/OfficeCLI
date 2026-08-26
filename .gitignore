@@ -15,5 +15,6 @@ Thumbs.db
 
 # Local OfficeCLI runtime state and generated documents
 .officecli/
+/artifacts/
 *.tmp
 ~$*
