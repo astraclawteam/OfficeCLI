@@ -41,6 +41,7 @@ public static class IssueSubtypes
     /// skipped to keep false positives near zero. Format bucket, Warning.</summary>
     public const string LowContrast = "low_contrast";
     public const string DuplicateBullet = "duplicate_bullet";
+    public const string FontSubstitutionRisk = "font_substitution_risk";
     public const string TextOverflow = "text_overflow";
     public const string OffSlideContent = "off_slide_content";
     public const string TextOcclusion = "text_occlusion";
@@ -76,7 +77,7 @@ public static class IssueSubtypes
     {
         FormulaNotEvaluated, FormulaCacheStale, FormulaRefMissingSheet, FormulaEvalError,
         FieldNotEvaluated, FieldCacheStale,
-        SlideFieldNotEvaluated, NotesUnresolvedRid, LowContrast, DuplicateBullet,
+        SlideFieldNotEvaluated, NotesUnresolvedRid, LowContrast, DuplicateBullet, FontSubstitutionRisk,
         TextOverflow, OffSlideContent, TextOcclusion, PptLayout,
         ChartSeriesRefMissingSheet, ChartCacheStale, ChartCategorySeriesMismatch,
         ChartSeriesNameMissing, ChartUnitMissing, ChartAxisLabelDensity, ChartAxisSeriesSemantics,
@@ -104,7 +105,7 @@ public static class IssueSubtypes
             + "Opt-in only (request by exact name; not included in --type content): "
             + string.Join(", ", OptInSubtypes) + ". "
             + "Subtypes are format-specific — formula_* / chart_* / definedname_* apply to xlsx, "
-            + "field_* to docx, chart_* to xlsx or pptx, slide_field_* / notes_unresolved_rid / broken_part_ref / low_contrast / duplicate_bullet / text_overflow / off_slide_content / text_occlusion / ppt_layout to pptx; requesting a subtype that does not apply to "
+            + "field_* to docx, chart_* to xlsx or pptx, slide_field_* / notes_unresolved_rid / broken_part_ref / low_contrast / duplicate_bullet / font_substitution_risk / text_overflow / off_slide_content / text_occlusion / ppt_layout to pptx; requesting a subtype that does not apply to "
             + "the queried file returns count=0 (not an error). "
             + "All values are case-insensitive and surrounding whitespace is trimmed.";
     }

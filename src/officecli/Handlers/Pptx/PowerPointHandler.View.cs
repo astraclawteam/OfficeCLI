@@ -524,6 +524,22 @@ public partial class PowerPointHandler
         long slideH = (long)(slideSize?.Cy?.Value ?? 6858000);
         var issueThemeColors = ResolveThemeColorMap();
 
+        var containsCjkText = GetSlideParts().SelectMany(part => GetSlide(part).Descendants<Drawing.Text>())
+            .Any(text => text.Text.Any(character => character is >= '\u3400' and <= '\u9fff'));
+        var theme = _doc.PresentationPart?.SlideMasterParts.FirstOrDefault()?.ThemePart?.Theme;
+        var riskyFonts = Core.PresentationSemanticInspector.CrossSuiteFontRisks(theme, containsCjkText);
+        if (riskyFonts.Count > 0)
+        {
+            issues.Add(new DocumentIssue
+            {
+                Id = $"F{++issueNum}", Type = IssueType.Format,
+                Subtype = Core.IssueSubtypes.FontSubstitutionRisk, Severity = IssueSeverity.Warning,
+                Path = "/theme/fontScheme",
+                Message = $"The presentation contains CJK text but its Latin theme fonts ({string.Join(", ", riskyFonts)}) may be substituted by WPS or systems without Microsoft Office fonts.",
+                Suggestion = "Use an installed cross-suite font such as Arial for Latin text and a locally available CJK font, then render and inspect the deck in the target office suite.",
+            });
+        }
+
         foreach (var slidePart in GetSlideParts())
         {
             slideNum++;
@@ -978,10 +994,14 @@ public partial class PowerPointHandler
                 }
 
                 var paragraphIndex = 0;
+                var placeholderType = shape.NonVisualShapeProperties?.ApplicationNonVisualDrawingProperties
+                    ?.GetFirstChild<PlaceholderShape>()?.Type?.Value;
+                var inheritsPlaceholderBullet = placeholderType == PlaceholderValues.Body
+                    || placeholderType == PlaceholderValues.Object;
                 foreach (var paragraph in shape.TextBody?.Elements<Drawing.Paragraph>() ?? Enumerable.Empty<Drawing.Paragraph>())
                 {
                     paragraphIndex++;
-                    if (!Core.PresentationSemanticInspector.HasDuplicateBullet(paragraph, out var bulletText, shape.TextBody?.ListStyle)) continue;
+                    if (!Core.PresentationSemanticInspector.HasDuplicateBullet(paragraph, out var bulletText, shape.TextBody?.ListStyle, inheritsPlaceholderBullet)) continue;
                     issues.Add(new DocumentIssue
                     {
                         Id = $"B{++issueNum}", Type = IssueType.Format,

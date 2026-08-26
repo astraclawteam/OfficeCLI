@@ -37,11 +37,14 @@ internal static class ChartSemanticInspector
                     "Bind the category axis and series values to ranges with the same number of rows."));
             }
             var text = item.Elements<OpenXmlCompositeElement>().FirstOrDefault(element => element.LocalName == "tx");
-            if (series.Count > 1 && !HasTextOrFormula(text))
+            var seriesName = SeriesName(item);
+            if (series.Count > 1 && (!HasTextOrFormula(text) || IsGenericSeriesName(seriesName)))
             {
                 findings.Add(new(
                     IssueSubtypes.ChartSeriesNameMissing,
-                    $"Chart series {index + 1} has no readable series name.",
+                    IsGenericSeriesName(seriesName)
+                        ? $"Chart series {index + 1} uses the generic name {seriesName}."
+                        : $"Chart series {index + 1} has no readable series name.",
                     "Bind the series name to a labelled cell or provide a meaningful literal name."));
             }
             var formatCode = values?.Descendants<OpenXmlElement>()
@@ -75,6 +78,13 @@ internal static class ChartSemanticInspector
                 "Chart series look like time periods while the category axis looks like business measures; the category and series roles are probably transposed.",
                 "Use time periods on the category axis and business measures (such as revenue, cost, budget or profit) as named series, then verify the source ranges."));
         }
+        if (series.Any(item => MixedTimeAndMeasure(SeriesCategories(item)) || MixedTimeAndMeasure(SeriesValues(item))))
+        {
+            findings.Add(new(
+                IssueSubtypes.ChartAxisSeriesSemantics,
+                "A chart category or value series mixes year-like values with large measure values; a header cell was probably included in the data range or the ranges are transposed.",
+                "Bind the category axis only to labels such as years or months, bind each value series only to comparable measures, and verify the source range excludes header cells."));
+        }
         return findings;
     }
 
@@ -91,6 +101,32 @@ internal static class ChartSemanticInspector
             .Select(point => point.Descendants<OpenXmlElement>().FirstOrDefault(element => element.LocalName == "v")?.InnerText.Trim() ?? "")
             .Where(value => value.Length > 0).ToList();
     }
+
+    private static List<string> SeriesValues(OpenXmlCompositeElement series)
+    {
+        var data = series.Elements<OpenXmlCompositeElement>()
+            .FirstOrDefault(element => element.LocalName is "val" or "yVal" or "bubbleSize");
+        if (data == null) return new();
+        return data.Descendants<OpenXmlElement>()
+            .Where(element => element.LocalName == "pt")
+            .Select(point => point.Descendants<OpenXmlElement>().FirstOrDefault(element => element.LocalName == "v")?.InnerText.Trim() ?? "")
+            .Where(value => value.Length > 0).ToList();
+    }
+
+    private static bool IsGenericSeriesName(string value)
+        => System.Text.RegularExpressions.Regex.IsMatch(value.Trim(), @"^(?:Series|系列)\s*\d+$",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+
+    private static bool MixedTimeAndMeasure(IReadOnlyList<string> values)
+        => values.Any(IsNumericYear) && values.Any(IsLargeNumericMeasure);
+
+    private static bool IsNumericYear(string value)
+        => double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var number)
+            && number >= 1900 && number <= 2200 && Math.Abs(number - Math.Round(number)) < 1e-9;
+
+    private static bool IsLargeNumericMeasure(string value)
+        => double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var number)
+            && Math.Abs(number) >= 10_000;
 
     private static bool Majority(IReadOnlyList<string> values, Func<string, bool> predicate)
         => values.Count > 0 && values.Count(predicate) * 2 > values.Count;

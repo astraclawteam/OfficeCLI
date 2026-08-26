@@ -494,8 +494,10 @@ public static class BlankDocCreator
         // complex-script glyphs through the theme's minor/major font, so stamping
         // the locale EA/CS typefaces into the font scheme makes CJK / Arabic text on
         // a fresh deck use the right default font (等线 for zh, …) instead of a Latin
-        // fallback. Latin stays the Office default.
-        var (_, pptEa, pptCs) = OfficeCli.Core.LocaleFontRegistry.Resolve(locale);
+        // fallback. When a locale explicitly supplies a Latin font, use it for
+        // the theme as well so WPS does not silently substitute Office-only
+        // defaults such as Calibri/Aptos in otherwise Chinese presentations.
+        var (pptLatin, pptEa, pptCs) = OfficeCli.Core.LocaleFontRegistry.Resolve(locale);
         using var doc = PresentationDocument.Create(path, PresentationDocumentType.Presentation);
         var presentationPart = doc.AddPresentationPart();
 
@@ -524,12 +526,12 @@ public static class BlankDocCreator
                 ) { Name = "Office" },
                 new DocumentFormat.OpenXml.Drawing.FontScheme(
                     new DocumentFormat.OpenXml.Drawing.MajorFont(
-                        new DocumentFormat.OpenXml.Drawing.LatinFont { Typeface = OfficeDefaultFonts.MajorLatin },
+                        new DocumentFormat.OpenXml.Drawing.LatinFont { Typeface = pptLatin ?? OfficeDefaultFonts.MajorLatin },
                         new DocumentFormat.OpenXml.Drawing.EastAsianFont { Typeface = pptEa ?? "" },
                         new DocumentFormat.OpenXml.Drawing.ComplexScriptFont { Typeface = pptCs ?? "" }
                     ),
                     new DocumentFormat.OpenXml.Drawing.MinorFont(
-                        new DocumentFormat.OpenXml.Drawing.LatinFont { Typeface = OfficeDefaultFonts.MinorLatin },
+                        new DocumentFormat.OpenXml.Drawing.LatinFont { Typeface = pptLatin ?? OfficeDefaultFonts.MinorLatin },
                         new DocumentFormat.OpenXml.Drawing.EastAsianFont { Typeface = pptEa ?? "" },
                         new DocumentFormat.OpenXml.Drawing.ComplexScriptFont { Typeface = pptCs ?? "" }
                     )

@@ -39,15 +39,15 @@ public static class LocaleFontRegistry
         switch (lower)
         {
             case "zh-tw" or "zh-hk" or "zh-mo" or "zh-hant":
-                return ("Times New Roman", "新細明體", null);
+                return ("Arial", "新細明體", null);
             case "zh-cn" or "zh-sg" or "zh-hans":
-                return ("Times New Roman", "等线", null);
+                return ("Arial", "等线", null);
         }
 
         // Language-only fall-throughs.
         return lang switch
         {
-            "zh" => ("Times New Roman", "等线", null),
+            "zh" => ("Arial", "等线", null),
             "ja" => ("Times New Roman", "游明朝", null),
             "ko" => ("Times New Roman", "맑은 고딕", null),
             "ar" => ("Times New Roman", null, "Arabic Typesetting"),
