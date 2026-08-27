@@ -87,6 +87,8 @@ public partial class ExcelHandler
                 "or dataRange=\"Sheet1!A1:D5\" or series1=\"Revenue:100,200,300\"");
         }
 
+        ApplyInferredChartSemanticProperties(chartTitle, seriesData.Count, properties);
+
         // Validate the chart type BEFORE any part is created: an unknown type
         // used to throw inside the builder AFTER the DrawingsPart and its
         // sheet relationship were attached, leaving an orphaned empty
@@ -364,6 +366,43 @@ public partial class ExcelHandler
 
         var chartIdx = CountExcelCharts(drawingsPart);
         return $"/{chartSheetName}/chart[{chartIdx}]";
+    }
+
+    private static void ApplyInferredChartSemanticProperties(
+        string? title,
+        int seriesCount,
+        Dictionary<string, string> properties)
+    {
+        var formats = Enumerable.Range(1, seriesCount)
+            .Select(index => properties.GetValueOrDefault($"series{index}.valuesNumFmt"))
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        if (formats.Count == 1
+            && !properties.ContainsKey("axisnumfmt")
+            && !properties.ContainsKey("axisnumberformat"))
+            properties["axisnumfmt"] = formats[0]!;
+
+        if (string.IsNullOrWhiteSpace(title)
+            || formats.Count != 1
+            || !formats[0]!.Contains('%')
+            || properties.ContainsKey("referenceline")
+            || properties.ContainsKey("refline")
+            || properties.ContainsKey("targetline"))
+            return;
+
+        var threshold = Regex.Match(
+            title,
+            @"(?:(?:门槛|阈值|目标|target|threshold)[^0-9]{0,12}(?<value>\d+(?:\.\d+)?)\s*%|(?<value>\d+(?:\.\d+)?)\s*%[^\p{L}0-9]{0,6}(?:门槛|阈值|目标|target|threshold))",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        if (!threshold.Success
+            || !double.TryParse(threshold.Groups["value"].Value, System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture, out var percent))
+            return;
+
+        var value = (percent / 100d).ToString("G17", System.Globalization.CultureInfo.InvariantCulture);
+        properties["referenceline"] = $"{value}:E8590C:门槛:dash";
     }
 
     // BUG-002: `add /SheetName/chart[N] --type chart-series` — append a data

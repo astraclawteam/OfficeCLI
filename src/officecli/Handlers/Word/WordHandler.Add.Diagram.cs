@@ -176,7 +176,7 @@ public partial class WordHandler
             long[] px = e.Points.Select(p => Emu(p.X)).ToArray();
             long[] py = e.Points.Select(p => Emu(p.Y)).ToArray();
             long mnX = px.Min(), mnY = py.Min(), w = px.Max() - mnX, h = py.Max() - mnY;
-            const long pad = 12700; // 1pt — keep an axis-aligned segment non-degenerate
+            const long pad = 63500; // 5pt — leave a stable editable hit target for axis-aligned connectors
             if (w < pad) { mnX -= (pad - w) / 2; w = pad; }
             if (h < pad) { mnY -= (pad - h) / 2; h = pad; }
             edgeBoxes.Add((e, mnX, mnY, w, h));
@@ -199,16 +199,28 @@ public partial class WordHandler
 
         // Build the <wps:wsp> children in group-relative coordinates (off = abs − gMin).
         var kids = new StringBuilder();
+        var nodeLabelKids = new StringBuilder();
         var nodeShapeIds = new Dictionary<string, uint>(StringComparer.Ordinal);
         foreach (var b in nodeBoxes)
         {
             var (geom, fill, line) = DiagramStyles.Resolve(b.n.Shape, theme);
             var shapeId = nextId++;
             nodeShapeIds[b.n.Id] = shapeId;
+            // LibreOffice/WPS can apply a preset geometry's internal text
+            // rectangle twice for diamonds, moving a decision label beside the
+            // shape in PDF output. Keep the editable semantic node and render its
+            // text as a transparent overlay in the same group coordinates.
+            bool overlayText = b.n.Shape == FlowShape.Decision;
             kids.Append(BuildDiagramNodeWsp(shapeId, geom, fill, line,
-                DiagramTextMetrics.WrappedText(b.n.Label, Math.Max(0.8, b.n.W - 0.6)), fontPt,
+                overlayText ? "" : DiagramTextMetrics.WrappedText(b.n.Label, Math.Max(0.8, b.n.W - 0.6)), fontPt,
                 b.x - gMinX, b.y - gMinY, b.cx, b.cy, factRefs: b.n.FactRefs, diagramId: lo.DiagramId,
                 latinFont: theme.MinorLatinFont, eastAsiaFont: theme.MinorEastAsiaFont));
+            if (overlayText)
+                nodeLabelKids.Append(BuildDiagramNodeWsp(nextId++, "rect", null, null,
+                    DiagramTextMetrics.WrappedText(b.n.Label, Math.Max(0.8, b.n.W * 0.52)), fontPt,
+                    b.x - gMinX, b.y - gMinY, b.cx, b.cy, label: true, factRefs: b.n.FactRefs,
+                    diagramId: lo.DiagramId, latinFont: theme.MinorLatinFont,
+                    eastAsiaFont: theme.MinorEastAsiaFont));
         }
         foreach (var b in edgeBoxes)
             kids.Append(BuildDiagramEdgeWsp(nextId++, b.e.Points, b.e.ArrowAtEnd, b.e.Dashed, theme.MutedText, b.e.FactRefs, Emu,
@@ -216,6 +228,7 @@ public partial class WordHandler
                 b.e.SourceNodeId is not null && nodeShapeIds.TryGetValue(b.e.SourceNodeId, out var source) ? source : null,
                 b.e.TargetNodeId is not null && nodeShapeIds.TryGetValue(b.e.TargetNodeId, out var target) ? target : null,
                 b.e.StartConnectionIndex, b.e.EndConnectionIndex));
+        kids.Append(nodeLabelKids);
         foreach (var b in labelBoxes)
             // Opaque (flowchart) labels mask the edge line; sequence labels sit in
             // empty space → no fill, so they don't break the lifeline they cross.
@@ -433,6 +446,42 @@ public partial class WordHandler
                                               uint? sourceShapeId, uint? targetShapeId,
                                               uint startConnectionIndex, uint endConnectionIndex)
     {
+        // A two-point edge is a real Office line, not a one-segment custom
+        // geometry. LibreOffice and WPS may interpret the bounding rectangle of
+        // a degenerate custom path as visible geometry, producing the hollow
+        // vertical boxes seen in exported PDFs. Preset `line` remains editable,
+        // keeps the connector metadata and renders consistently across hosts.
+        if (points.Count == 2)
+        {
+            long x1 = emu(points[0].X), y1 = emu(points[0].Y);
+            long x2 = emu(points[1].X), y2 = emu(points[1].Y);
+            bool vertical = Math.Abs(points[0].X - points[1].X) < 0.05;
+            bool horizontal = Math.Abs(points[0].Y - points[1].Y) < 0.05;
+            string flips = (x2 < x1 ? " flipH=\"1\"" : "") + (y2 < y1 ? " flipV=\"1\"" : "");
+            string simpleDash = dashed ? "<a:prstDash val=\"dash\"/>" : "";
+            string simpleArrow = arrowAtEnd ? "<a:tailEnd type=\"triangle\"/>" : "";
+            string simpleLine = $"<a:ln w=\"12700\" cap=\"flat\"><a:solidFill><a:srgbClr val=\"{edgeColor}\"/></a:solidFill>{simpleDash}<a:round/>{simpleArrow}</a:ln>";
+            string simpleMetadata = DiagramMetadata(diagramId, factRefs);
+            string simpleDescr = simpleMetadata.Length > 0 ? $" descr=\"{SecurityElement.Escape(simpleMetadata)}\"" : "";
+            string simpleConnections = (sourceShapeId is null ? "" : $"<a:stCxn id=\"{sourceShapeId}\" idx=\"{startConnectionIndex}\"/>")
+                + (targetShapeId is null ? "" : $"<a:endCxn id=\"{targetShapeId}\" idx=\"{endConnectionIndex}\"/>");
+            if (vertical || horizontal)
+            {
+                string preset = !arrowAtEnd ? "rect"
+                    : vertical ? (y2 >= y1 ? "downArrow" : "upArrow")
+                    : (x2 >= x1 ? "rightArrow" : "leftArrow");
+                return
+                    $"<wps:wsp><wps:cNvPr id=\"{id}\" name=\"DiagramEdge {id}\"{simpleDescr}/><wps:cNvCnPr>{simpleConnections}</wps:cNvCnPr><wps:spPr>" +
+                    $"<a:xfrm><a:off x=\"{absMinX - groupMinX}\" y=\"{absMinY - groupMinY}\"/><a:ext cx=\"{w}\" cy=\"{h}\"/></a:xfrm>" +
+                    $"<a:prstGeom prst=\"{preset}\"><a:avLst/></a:prstGeom><a:solidFill><a:srgbClr val=\"{edgeColor}\"/></a:solidFill>" +
+                    "<a:ln><a:noFill/></a:ln></wps:spPr><wps:bodyPr/></wps:wsp>";
+            }
+            return
+                $"<wps:wsp><wps:cNvPr id=\"{id}\" name=\"DiagramEdge {id}\"{simpleDescr}/><wps:cNvCnPr>{simpleConnections}</wps:cNvCnPr><wps:spPr>" +
+                $"<a:xfrm{flips}><a:off x=\"{absMinX - groupMinX}\" y=\"{absMinY - groupMinY}\"/><a:ext cx=\"{w}\" cy=\"{h}\"/></a:xfrm>" +
+                $"<a:prstGeom prst=\"line\"><a:avLst/></a:prstGeom><a:noFill/>{simpleLine}</wps:spPr><wps:bodyPr/></wps:wsp>";
+        }
+
         var path = new StringBuilder();
         for (int i = 0; i < points.Count; i++)
         {

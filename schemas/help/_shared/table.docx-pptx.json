@@ -125,6 +125,19 @@
       "readback": "n/a (seeds cells at Add time)",
       "enforcement": "strict"
     },
+    "datajson": {
+      "type": "string",
+      "aliases": ["dataJson"],
+      "description": "lossless JSON row arrays for business tables. Cells may be JSON scalars or {value,display}; display is written exactly. Rows must have equal length. Prefer this form when text contains commas, semicolons, formatted numbers, percentages, currency or dates.",
+      "add": true,
+      "set": false,
+      "get": false,
+      "examples": [
+        "--prop dataJson='[[\"指标\",\"结果\"],[\"总会话量\",{\"value\":12480,\"display\":\"12,480\"}]]'"
+      ],
+      "readback": "n/a (seeds cells at Add time)",
+      "enforcement": "strict"
+    },
     "rows": {
       "type": "int",
       "description": "number of rows (ignored if 'data' is supplied).",

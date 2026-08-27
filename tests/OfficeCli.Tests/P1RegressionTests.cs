@@ -251,6 +251,37 @@ public sealed class P1RegressionTests
     }
 
     [Fact]
+    public void ExcelPreviewHonorsHiddenGridlinesAndRowColumnHeaders()
+    {
+        using var temp = new TempDirectory();
+        var path = temp.File("delivery-view.xlsx");
+        OpenXmlFixture.CreateWorkbook(path, "Dashboard");
+        using (var doc = SpreadsheetDocument.Open(path, true))
+        {
+            var worksheet = doc.WorkbookPart!.WorksheetParts.Single().Worksheet;
+            worksheet.GetFirstChild<SheetData>()!
+                .Append(new Row(new Cell
+                {
+                    CellReference = "A1", DataType = CellValues.String,
+                    CellValue = new CellValue("交付看板"),
+                }) { RowIndex = 1 });
+            var sheetViews = new SheetViews(new SheetView { WorkbookViewId = 0U });
+            worksheet.InsertBefore(sheetViews, worksheet.GetFirstChild<SheetData>());
+            var sheetView = sheetViews.GetFirstChild<SheetView>()!;
+            sheetView.ShowGridLines = false;
+            sheetView.ShowRowColHeaders = false;
+            worksheet.Save();
+        }
+
+        using var handler = new ExcelHandler(path, editable: false);
+        var html = handler.ViewAsHtml();
+        Assert.Contains("class=\"no-grid no-headers\"", html);
+        Assert.DoesNotContain("<th class=\"col-header\"", html);
+        Assert.DoesNotContain("<th class=\"row-header\"", html);
+        Assert.Contains("data-path=\"/Dashboard/A1\"", html);
+    }
+
+    [Fact]
     public void TrackedReplaceCanDeleteACompleteHyperlink_Issue279()
     {
         using var temp = new TempDirectory();

@@ -235,10 +235,52 @@ public sealed class DiagramSpecTests
             var xml = package.MainDocumentPart!.Document!.OuterXml;
             Assert.Equal(spec.Edges.Count, System.Text.RegularExpressions.Regex.Matches(xml, "<a:stCxn\\b").Count);
             Assert.Equal(spec.Edges.Count, System.Text.RegularExpressions.Regex.Matches(xml, "<a:endCxn\\b").Count);
+            Assert.Matches("<a:prstGeom prst=\"(?:downArrow|upArrow|rightArrow|leftArrow|rect)\"", xml);
             Assert.Contains("w:eastAsia=\"微软雅黑\"", xml);
             Assert.True(System.Text.RegularExpressions.Regex.Matches(xml, "<w:br\\b").Count >= 4,
                 "deterministic Word wrapping must use native w:br elements rather than raw newline text");
         }
+    }
+
+    [Fact]
+    public void NativeDiagramUsesRemainingCanvasBelowAnExistingConclusionTitle()
+    {
+        using var temp = new TempDirectory();
+        var specPath = temp.File("diagram.json");
+        File.WriteAllText(specPath, ArchitectureSpec.Replace("\"top-down\"", "\"left-right\""));
+        var pptx = temp.File("conclusion-led-diagram.pptx");
+        BlankDocCreator.Create(pptx, "zh-CN");
+
+        using (var handler = new PowerPointHandler(pptx, editable: true))
+        {
+            handler.Add("/", "slide", null, new Dictionary<string, string>());
+            handler.Add("/slide[1]", "shape", null, new Dictionary<string, string>
+            {
+                ["text"] = "收入增长但风险仍需在本期关闭",
+                ["x"] = "1.2cm",
+                ["y"] = "0.6cm",
+                ["width"] = "31.4cm",
+                ["height"] = "1.4cm",
+                ["fill"] = "none",
+                ["line"] = "none",
+            });
+            handler.Add("/slide[1]", "diagram", null, new Dictionary<string, string> { ["spec"] = specPath });
+        }
+
+        using var package = PresentationDocument.Open(pptx, false);
+        Assert.Empty(new OpenXmlValidator().Validate(package));
+        var shapeTree = package.PresentationPart!.SlideParts.Single().Slide!.CommonSlideData!.ShapeTree!;
+        var title = Assert.Single(shapeTree.Elements<Shape>());
+        var diagram = Assert.Single(shapeTree.Elements<GroupShape>());
+        var titleTransform = title.ShapeProperties!.Transform2D!;
+        var diagramTransform = diagram.GroupShapeProperties!.TransformGroup!;
+        var titleBottom = titleTransform.Offset!.Y!.Value + titleTransform.Extents!.Cy!.Value;
+        Assert.True(diagramTransform.Offset!.Y!.Value > titleBottom,
+            "the diagram must be placed below the existing business conclusion instead of overlapping it");
+
+        var slideSize = package.PresentationPart.Presentation.SlideSize!;
+        Assert.True(diagramTransform.Extents!.Cx!.Value >= slideSize.Cx!.Value * 0.45,
+            "the editable diagram should use a meaningful share of the remaining slide canvas");
     }
 
     [Fact]

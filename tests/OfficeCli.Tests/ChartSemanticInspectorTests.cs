@@ -1,5 +1,7 @@
 using DocumentFormat.OpenXml.Drawing;
+using DocumentFormat.OpenXml.Packaging;
 using OfficeCli.Core;
+using OfficeCli.Handlers;
 using Xunit;
 using C = DocumentFormat.OpenXml.Drawing.Charts;
 
@@ -7,6 +9,65 @@ namespace OfficeCli.Tests;
 
 public class ChartSemanticInspectorTests
 {
+    [Fact]
+    public void PercentageChartBuildsPercentageAxisAndDeclaredThresholdLine()
+    {
+        using var temp = new TempDirectory();
+        var path = temp.File("percentage-threshold.xlsx");
+        OpenXmlFixture.CreateWorkbook(path, "Sheet1");
+        using (var handler = new ExcelHandler(path, editable: true))
+        {
+            handler.Add("/Sheet1", "chart", null, new Dictionary<string, string>
+            {
+                ["chartType"] = "line",
+                ["title"] = "错误回答率（扩大门槛 0.5%）",
+                ["categories"] = "第1周,第2周",
+                ["series1"] = "错误回答率:0.014,0.006",
+                ["series1.valuesNumFmt"] = "0.0%",
+            });
+        }
+
+        using var document = SpreadsheetDocument.Open(path, false);
+        var chartSpace = Assert.IsType<C.ChartSpace>(
+            Assert.Single(document.WorkbookPart!.WorksheetParts.Single().DrawingsPart!.ChartParts).ChartSpace);
+        var valueAxis = chartSpace.Descendants<C.ValueAxis>().Single();
+        Assert.Equal("0.0%", valueAxis.GetFirstChild<C.NumberingFormat>()?.FormatCode?.Value);
+        Assert.DoesNotContain(ChartSemanticInspector.Inspect(chartSpace), finding =>
+            finding.Subtype is IssueSubtypes.ChartPercentageAxisFormat or IssueSubtypes.ChartThresholdMissing);
+    }
+
+    [Fact]
+    public void DetectsPercentageAxisAndDeclaredThresholdWithoutReferenceLine()
+    {
+        var series = new C.LineChartSeries(
+            new C.Index { Val = 0U }, new C.Order { Val = 0U },
+            new C.SeriesText(new C.NumericValue("错误回答率")),
+            new C.CategoryAxisData(new C.StringLiteral(
+                new C.PointCount { Val = 2U },
+                new C.StringPoint(new C.NumericValue("第1周")) { Index = 0U },
+                new C.StringPoint(new C.NumericValue("第2周")) { Index = 1U })),
+            new C.Values(new C.NumberLiteral(
+                new C.FormatCode("0.0%"), new C.PointCount { Val = 2U },
+                new C.NumericPoint(new C.NumericValue("0.014")) { Index = 0U },
+                new C.NumericPoint(new C.NumericValue("0.006")) { Index = 1U })));
+        var titleText = new C.RichText(
+            new DocumentFormat.OpenXml.Drawing.BodyProperties(),
+            new DocumentFormat.OpenXml.Drawing.ListStyle(),
+            new DocumentFormat.OpenXml.Drawing.Paragraph(
+                new DocumentFormat.OpenXml.Drawing.Run(
+                    new DocumentFormat.OpenXml.Drawing.Text("错误回答率（扩大门槛 0.5%）"))));
+        var chart = new C.Chart(
+            new C.Title(new C.ChartText(titleText)),
+            new C.PlotArea(
+                new C.LineChart(series),
+                new C.ValueAxis(new C.NumberingFormat { FormatCode = "0", SourceLinked = false })));
+
+        var findings = ChartSemanticInspector.Inspect(new C.ChartSpace(chart));
+
+        Assert.Contains(findings, item => item.Subtype == IssueSubtypes.ChartPercentageAxisFormat);
+        Assert.Contains(findings, item => item.Subtype == IssueSubtypes.ChartThresholdMissing);
+    }
+
     [Fact]
     public void DetectsCategoryCountMissingSeriesNameAndPercentageUnit()
     {

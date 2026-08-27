@@ -202,10 +202,15 @@ public static class DiagramSvgRenderer
                                    Func<double, string> n, Func<string?, string> e)
     {
         var lines = DiagramTextMetrics.Wrap(text, Math.Max(0.6, width - 0.3));
-        var start = cy - (lines.Count - 1) * 0.22;
+        // Keep CJK ascenders/descenders and mixed Latin numbers visually
+        // separate after SVG is imported by Word/WPS or rasterized for PDF.
+        // The former fixed 0.44 cm step was only 1.05em for node text and made
+        // four-line action labels look overprinted.
+        var lineStep = fontSize * 1.28;
+        var start = cy - (lines.Count - 1) * lineStep / 2;
         builder.Append($"<text x=\"{n(cx)}\" y=\"{n(start)}\" text-anchor=\"middle\" dominant-baseline=\"middle\" font-family=\"{e(eastAsiaFont)},{e(latinFont)},sans-serif\" font-size=\"{n(fontSize)}\" fill=\"#{color}\">");
         for (var index = 0; index < lines.Count; index++)
-            builder.Append($"<tspan x=\"{n(cx)}\" dy=\"{(index == 0 ? "0" : "0.44")}\">{e(lines[index])}</tspan>");
+            builder.Append($"<tspan x=\"{n(cx)}\" dy=\"{(index == 0 ? "0" : n(lineStep))}\">{e(lines[index])}</tspan>");
         builder.Append("</text>");
     }
 

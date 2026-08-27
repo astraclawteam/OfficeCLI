@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 using System.Text;
+using System.Text.Json;
 
 namespace OfficeCli.Core;
 
@@ -19,6 +20,57 @@ namespace OfficeCli.Core;
 /// </summary>
 public static class DelimitedText
 {
+    /// <summary>
+    /// Parse the lossless table form accepted by <c>dataJson=</c>. The root
+    /// value must be an array of equally-sized row arrays. Cells may be JSON
+    /// scalars, or an object with a required <c>value</c> member and optional
+    /// <c>display</c> member. When present, <c>display</c> is the exact text
+    /// written to Office; otherwise the scalar value is rendered invariantly.
+    /// This keeps values such as "12,480" in one cell without depending on
+    /// delimiter quoting and gives project planners a typed, auditable input.
+    /// </summary>
+    public static string[][] ParseJsonGrid(string content)
+    {
+        if (string.IsNullOrWhiteSpace(content))
+            throw new ArgumentException("Table 'dataJson' is empty.");
+
+        using var document = JsonDocument.Parse(content);
+        if (document.RootElement.ValueKind != JsonValueKind.Array)
+            throw new ArgumentException("Table 'dataJson' must be a JSON array of row arrays.");
+
+        var rows = new List<string[]>();
+        foreach (var rowElement in document.RootElement.EnumerateArray())
+        {
+            if (rowElement.ValueKind != JsonValueKind.Array)
+                throw new ArgumentException("Every table 'dataJson' row must be a JSON array.");
+            rows.Add(rowElement.EnumerateArray().Select(JsonCellText).ToArray());
+        }
+
+        EnsureRectangular(rows, "dataJson");
+        return rows.ToArray();
+    }
+
+    /// <summary>
+    /// Reject ragged tables instead of padding them and silently shifting
+    /// business values into the wrong columns.
+    /// </summary>
+    public static void EnsureRectangular(IReadOnlyList<string[]> rows, string propertyName = "data")
+    {
+        if (rows.Count == 0 || rows.All(row => row.Length == 0))
+            throw new ArgumentException($"Table '{propertyName}' is empty — provide at least one cell.");
+
+        var expected = rows[0].Length;
+        if (expected == 0)
+            throw new ArgumentException($"Table '{propertyName}' first row is empty.");
+        for (var index = 1; index < rows.Count; index++)
+        {
+            if (rows[index].Length != expected)
+                throw new ArgumentException(
+                    $"Table '{propertyName}' row {index + 1} has {rows[index].Length} cell(s), but row 1 has {expected}. "
+                    + "Quote delimiter-containing cells or use dataJson with explicit row arrays; ragged rows are not padded because that can corrupt business data.");
+        }
+    }
+
     /// <summary>
     /// Split <paramref name="content"/> into rows of fields. A field wrapped in
     /// double quotes may contain the field separator, the row separator and
@@ -81,6 +133,33 @@ public static class DelimitedText
         EndRow();
         return rows.ToArray();
     }
+
+    private static string JsonCellText(JsonElement cell)
+    {
+        if (cell.ValueKind == JsonValueKind.Object)
+        {
+            if (!cell.TryGetProperty("value", out var value))
+                throw new ArgumentException("A table dataJson cell object must contain 'value'.");
+            if (cell.TryGetProperty("display", out var display))
+            {
+                if (display.ValueKind != JsonValueKind.String)
+                    throw new ArgumentException("A table dataJson cell 'display' must be a string.");
+                return display.GetString() ?? "";
+            }
+            return JsonScalarText(value);
+        }
+        return JsonScalarText(cell);
+    }
+
+    private static string JsonScalarText(JsonElement value) => value.ValueKind switch
+    {
+        JsonValueKind.String => value.GetString() ?? "",
+        JsonValueKind.Number => value.GetRawText(),
+        JsonValueKind.True => "true",
+        JsonValueKind.False => "false",
+        JsonValueKind.Null => "",
+        _ => throw new ArgumentException("Table dataJson cells must be scalars or { value, display? } objects."),
+    };
 
     private static bool IsBlank(StringBuilder sb)
     {

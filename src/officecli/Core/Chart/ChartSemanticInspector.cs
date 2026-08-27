@@ -3,6 +3,7 @@
 
 using DocumentFormat.OpenXml;
 using System.Globalization;
+using System.Text.RegularExpressions;
 using C = DocumentFormat.OpenXml.Drawing.Charts;
 
 namespace OfficeCli.Core;
@@ -60,6 +61,24 @@ internal static class ChartSemanticInspector
         }
         var valueAxis = plotArea.GetFirstChild<C.ValueAxis>();
         var axisFormat = valueAxis?.GetFirstChild<C.NumberingFormat>()?.FormatCode?.Value ?? "";
+        var hasPercentageSeries = series.Any(item => SeriesFormatCode(item).Contains('%'));
+        if (hasPercentageSeries && !axisFormat.Contains('%'))
+        {
+            findings.Add(new(
+                IssueSubtypes.ChartPercentageAxisFormat,
+                $"Chart values use percentage formatting, but the value axis format is '{(axisFormat.Length == 0 ? "General" : axisFormat)}'. Small percentage values can render as 0.",
+                "Set axisNumFmt to a percentage format such as 0.0%, or let the chart inherit the source series number format."));
+        }
+
+        var titleText = chartSpace.GetFirstChild<C.Chart>()?.GetFirstChild<C.Title>()?.InnerText ?? "";
+        var declaredThreshold = PercentageThreshold(titleText);
+        if (declaredThreshold != null && !HasConstantThresholdSeries(series, declaredThreshold.Value))
+        {
+            findings.Add(new(
+                IssueSubtypes.ChartThresholdMissing,
+                $"The chart title declares a {declaredThreshold.Value.ToString("0.###%", CultureInfo.InvariantCulture)} threshold, but no matching reference-line series is present.",
+                "Add a referenceLine/targetLine at the declared threshold so the visual claim is represented by the chart itself."));
+        }
         var maximumMagnitude = series.Select(MaxAbsoluteValue).DefaultIfEmpty(0d).Max();
         if (maximumMagnitude >= 10_000_000d && !UsesCompactAxisLabels(valueAxis, axisFormat))
         {
@@ -112,6 +131,37 @@ internal static class ChartSemanticInspector
             .Select(point => point.Descendants<OpenXmlElement>().FirstOrDefault(element => element.LocalName == "v")?.InnerText.Trim() ?? "")
             .Where(value => value.Length > 0).ToList();
     }
+
+    private static string SeriesFormatCode(OpenXmlCompositeElement series)
+        => series.Elements<OpenXmlCompositeElement>()
+            .FirstOrDefault(element => element.LocalName is "val" or "yVal" or "bubbleSize")?
+            .Descendants<OpenXmlElement>()
+            .FirstOrDefault(element => element.LocalName == "formatCode")?.InnerText ?? "";
+
+    private static double? PercentageThreshold(string title)
+    {
+        if (string.IsNullOrWhiteSpace(title)) return null;
+        var match = Regex.Match(
+            title,
+            @"(?:(?:门槛|阈值|目标|target|threshold)[^0-9]{0,12}(?<value>\d+(?:\.\d+)?)\s*%|(?<value>\d+(?:\.\d+)?)\s*%[^\p{L}0-9]{0,6}(?:门槛|阈值|目标|target|threshold))",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        return match.Success
+            && double.TryParse(match.Groups["value"].Value, NumberStyles.Float, CultureInfo.InvariantCulture, out var value)
+            ? value / 100d
+            : null;
+    }
+
+    private static bool HasConstantThresholdSeries(IReadOnlyList<OpenXmlCompositeElement> series, double threshold)
+        => series.Any(item =>
+        {
+            var values = SeriesValues(item)
+                .Select(value => double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var number)
+                    ? (double?)number : null)
+                .Where(value => value.HasValue)
+                .Select(value => value!.Value)
+                .ToList();
+            return values.Count >= 2 && values.All(value => Math.Abs(value - threshold) <= Math.Max(1e-9, Math.Abs(threshold) * 1e-6));
+        });
 
     private static bool IsGenericSeriesName(string value)
         => System.Text.RegularExpressions.Regex.IsMatch(value.Trim(), @"^(?:Series|系列)\s*\d+$",

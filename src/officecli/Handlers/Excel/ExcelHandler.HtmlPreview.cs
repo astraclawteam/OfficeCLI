@@ -230,6 +230,10 @@ public partial class ExcelHandler
             var isRtl = sheetView?.RightToLeft?.Value == true;
             // ShowGridLines defaults to true; only false when explicitly set false.
             var showGridLines = sheetView?.ShowGridLines?.Value != false;
+            // ShowRowColHeaders has the same OOXML default. Delivery-oriented
+            // sheets commonly disable it so printed/PDF output does not expose
+            // spreadsheet chrome (A/B/C headings and row numbers).
+            var showRowColHeaders = sheetView?.ShowRowColHeaders?.Value != false;
             var dirAttr = isRtl ? " dir=\"rtl\"" : "";
             sb.AppendLine($"<div class=\"sheet-content{activeClass}\" data-sheet=\"{sheetIdx}\"{dirAttr}>");
             var charts = CollectSheetCharts(worksheetPart, sheetName);
@@ -247,7 +251,7 @@ public partial class ExcelHandler
             var rangeMatchesSheet = requestedRange.HasValue
                 && requestedRange.Value.sheet.Equals(sheetName, StringComparison.OrdinalIgnoreCase);
             var printArea = usePrintAreas ? GetPreviewPrintArea(sheetName) : null;
-            RenderSheetTable(sb, sheetName, renderPart, stylesheet, renderStyles, charts, sheetIdx, showGridLines,
+            RenderSheetTable(sb, sheetName, renderPart, stylesheet, renderStyles, charts, sheetIdx, showGridLines, showRowColHeaders,
                 rangeMatchesSheet ? requestedRange!.Value.maxRow : 0,
                 rangeMatchesSheet ? requestedRange!.Value.maxCol : 0,
                 printArea?.maxRow ?? 0,
@@ -369,7 +373,7 @@ public partial class ExcelHandler
 
     private void RenderSheetTable(StringBuilder sb, string sheetName, WorksheetPart worksheetPart, Stylesheet? stylesheet, RenderStyleArrays renderStyles,
         List<(int fromRow, int toRow, int fromCol, int toCol, double colOffsetPt, string html)>? charts = null, int sheetIdx = 0,
-        bool showGridLines = true, int minimumRow = 0, int minimumCol = 0, int maximumRow = 0, int maximumCol = 0)
+        bool showGridLines = true, bool showRowColHeaders = true, int minimumRow = 0, int minimumCol = 0, int maximumRow = 0, int maximumCol = 0)
     {
         var ws = GetSheet(worksheetPart);
         var sheetData = ws.GetFirstChild<SheetData>();
@@ -436,7 +440,7 @@ public partial class ExcelHandler
         var frozenLeftOffsets = new Dictionary<int, double>();
         if (frozenCols > 0)
         {
-            double cumLeft = 30; // row header width in pt
+            double cumLeft = showRowColHeaders ? 30 : 0; // row header width in pt
             for (int fc = 1; fc <= frozenCols; fc++)
             {
                 frozenLeftOffsets[fc] = cumLeft;
@@ -600,7 +604,7 @@ public partial class ExcelHandler
         var frozenTopOffsets = new Dictionary<int, double>();
         if (frozenRows > 0)
         {
-            double cumTop = 24; // approximate thead (column header) height
+            double cumTop = showRowColHeaders ? 24 : 0; // approximate thead (column header) height
             for (int fr = 1; fr <= frozenRows; fr++)
             {
                 frozenTopOffsets[fr] = cumTop;
@@ -655,7 +659,7 @@ public partial class ExcelHandler
         // Compute total table width so the table sizes to its content (not the wrapper).
         // Without an explicit width, table-layout:fixed inside a flex wrapper shrinks columns
         // proportionally to fit the viewport, ignoring declared col widths.
-        double totalTableWidthPt = 30; // row-header-col width
+        double totalTableWidthPt = showRowColHeaders ? 30 : 0; // row-header-col width
         for (int c = 1; c <= maxCol; c++)
         {
             if (hiddenCols.Contains(c)) continue;
@@ -664,12 +668,16 @@ public partial class ExcelHandler
 
         // Start table (position:relative for chart overlays)
         sb.AppendLine("<div class=\"table-wrapper\" style=\"position:relative\">");
-        var noGridClass = showGridLines ? "" : " class=\"no-grid\"";
-        sb.AppendLine($"<table{noGridClass} style=\"width:{totalTableWidthPt:0.##}pt\">");
+        var tableClasses = new List<string>();
+        if (!showGridLines) tableClasses.Add("no-grid");
+        if (!showRowColHeaders) tableClasses.Add("no-headers");
+        var tableClass = tableClasses.Count == 0 ? "" : $" class=\"{string.Join(' ', tableClasses)}\"";
+        sb.AppendLine($"<table{tableClass} style=\"width:{totalTableWidthPt:0.##}pt\">");
         sb.AppendLine($"<caption class=\"sr-only\">{HtmlEncode(sheetName)}</caption>");
 
         // Colgroup for column widths + header column (skip hidden columns to match td count)
-        sb.Append("<colgroup><col class=\"row-header-col\">");
+        sb.Append("<colgroup>");
+        if (showRowColHeaders) sb.Append("<col class=\"row-header-col\">");
         for (int c = 1; c <= maxCol; c++)
         {
             if (hiddenCols.Contains(c)) continue; // skip hidden cols — tds are also skipped
@@ -678,33 +686,37 @@ public partial class ExcelHandler
         }
         sb.AppendLine("</colgroup>");
 
-        // Column header row
-        sb.Append("<thead><tr><th class=\"corner-cell\"");
-        if (frozenRows > 0 || frozenCols > 0) sb.Append(" style=\"position:sticky;top:0;left:0;z-index:4\"");
-        sb.Append("></th>");
-        for (int c = 1; c <= maxCol; c++)
+        // Column header row. Omit it entirely when the workbook disables row/
+        // column headings; hiding it only with CSS would still reserve print space.
+        if (showRowColHeaders)
         {
-            if (hiddenCols.Contains(c)) continue;
-            var colName = IndexToColumnName(c);
-            var isFrozenColHeader = frozenCols > 0 && c <= frozenCols;
-            string stickyStyle;
-            if (frozenRows > 0 && isFrozenColHeader)
+            sb.Append("<thead><tr><th class=\"corner-cell\"");
+            if (frozenRows > 0 || frozenCols > 0) sb.Append(" style=\"position:sticky;top:0;left:0;z-index:4\"");
+            sb.Append("></th>");
+            for (int c = 1; c <= maxCol; c++)
             {
-                var leftPt = frozenLeftOffsets.TryGetValue(c, out var lf) ? lf : 0;
-                stickyStyle = $" style=\"position:sticky;top:0;left:{leftPt:0.##}pt;z-index:4\"";
+                if (hiddenCols.Contains(c)) continue;
+                var colName = IndexToColumnName(c);
+                var isFrozenColHeader = frozenCols > 0 && c <= frozenCols;
+                string stickyStyle;
+                if (frozenRows > 0 && isFrozenColHeader)
+                {
+                    var leftPt = frozenLeftOffsets.TryGetValue(c, out var lf) ? lf : 0;
+                    stickyStyle = $" style=\"position:sticky;top:0;left:{leftPt:0.##}pt;z-index:4\"";
+                }
+                else if (frozenRows > 0)
+                    stickyStyle = " style=\"position:sticky;top:0;z-index:3\"";
+                else if (isFrozenColHeader)
+                {
+                    var leftPt = frozenLeftOffsets.TryGetValue(c, out var lf2) ? lf2 : 0;
+                    stickyStyle = $" style=\"position:sticky;left:{leftPt:0.##}pt;z-index:3\"";
+                }
+                else
+                    stickyStyle = "";
+                sb.Append($"<th class=\"col-header\" data-path=\"/{HtmlEncode(sheetName)}/col[{colName}]\"{stickyStyle}>{colName}</th>");
             }
-            else if (frozenRows > 0)
-                stickyStyle = " style=\"position:sticky;top:0;z-index:3\"";
-            else if (isFrozenColHeader)
-            {
-                var leftPt = frozenLeftOffsets.TryGetValue(c, out var lf2) ? lf2 : 0;
-                stickyStyle = $" style=\"position:sticky;left:{leftPt:0.##}pt;z-index:3\"";
-            }
-            else
-                stickyStyle = "";
-            sb.Append($"<th class=\"col-header\" data-path=\"/{HtmlEncode(sheetName)}/col[{colName}]\"{stickyStyle}>{colName}</th>");
+            sb.AppendLine("</tr></thead>");
         }
-        sb.AppendLine("</tr></thead>");
 
         // chartAtRow and sideCharts already built above
 
@@ -718,7 +730,8 @@ public partial class ExcelHandler
         var ctx = new SheetRenderContext(sheetName, sheetIdx, cellMap, maxRow, maxCol,
             rowHeights, hiddenRows, hiddenCols, mergeMap, frozenRows, frozenCols,
             frozenLeftOffsets, frozenTopOffsets, cfMap, dataBarMap, iconSetMap, sparklineMap,
-            tableStyleMap, autoFilterCells, stylesheet, renderStyles, evaluator, defaultColWidthPt, defaultRowHeightPt, colWidths);
+            tableStyleMap, autoFilterCells, stylesheet, renderStyles, evaluator, defaultColWidthPt, defaultRowHeightPt, colWidths,
+            showRowColHeaders);
         RenderTbody(sb, ctx);
         sb.AppendLine("</table>");
 
@@ -726,7 +739,7 @@ public partial class ExcelHandler
         // Position is computed from anchor row/col using column widths and row heights.
         if (charts != null)
         {
-            var rowHeaderWidthPt = 30.0; // matches .row-header-col CSS
+            var rowHeaderWidthPt = showRowColHeaders ? 30.0 : 0.0; // matches .row-header-col CSS
             foreach (var (fromRow, toRow, fromCol, toCol, colOffsetPt, html) in charts)
             {
                 // Compute left position: sum of column widths from col 1 to fromCol + row header
@@ -737,7 +750,7 @@ public partial class ExcelHandler
                     leftPt += colWidths.TryGetValue(c, out var cw) ? cw : defaultColWidthPt;
                 }
                 // Compute top position: sum of row heights from row 1 to fromRow + header row (~24px)
-                double topPt = 24.0 * 0.75; // header row height in pt
+                double topPt = showRowColHeaders ? 24.0 * 0.75 : 0.0; // header row height in pt
                 for (int r = 1; r <= fromRow && r <= maxRow; r++)
                 {
                     if (hiddenRows.Contains(r)) continue;
@@ -820,7 +833,8 @@ public partial class ExcelHandler
         Core.FormulaEvaluator? Evaluator,
         double DefaultColWidthPt,
         double DefaultRowHeightPt,
-        Dictionary<int, double> ColWidths);
+        Dictionary<int, double> ColWidths,
+        bool ShowRowColHeaders);
 
     // CONSISTENCY(excel-virt): Private ExcelHandler.HtmlPreview.Virt.cs implements
     // OnRenderTbody to emit virtualised rows (JSON data + empty tbody) and sets
@@ -880,14 +894,17 @@ public partial class ExcelHandler
     internal string BuildRowInnerHtml(SheetRenderContext ctx, int r, bool isRowFrozen)
     {
         var rowSb = new StringBuilder();
-        string rowHeaderStyle;
-        if (isRowFrozen)
-            rowHeaderStyle = " style=\"position:sticky;top:0;left:0;z-index:3\"";
-        else if (ctx.FrozenCols > 0)
-            rowHeaderStyle = " style=\"position:sticky;left:0;z-index:2\"";
-        else
-            rowHeaderStyle = "";
-        rowSb.Append($"<th class=\"row-header\" data-path=\"/{HtmlEncode(ctx.SheetName)}/row[{r}]\"{rowHeaderStyle}>{r}</th>");
+        if (ctx.ShowRowColHeaders)
+        {
+            string rowHeaderStyle;
+            if (isRowFrozen)
+                rowHeaderStyle = " style=\"position:sticky;top:0;left:0;z-index:3\"";
+            else if (ctx.FrozenCols > 0)
+                rowHeaderStyle = " style=\"position:sticky;left:0;z-index:2\"";
+            else
+                rowHeaderStyle = "";
+            rowSb.Append($"<th class=\"row-header\" data-path=\"/{HtmlEncode(ctx.SheetName)}/row[{r}]\"{rowHeaderStyle}>{r}</th>");
+        }
 
         for (int c = 1; c <= ctx.MaxCol; c++)
         {

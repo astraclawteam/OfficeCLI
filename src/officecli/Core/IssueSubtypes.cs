@@ -50,6 +50,8 @@ public static class IssueSubtypes
     public const string ChartUnitMissing = "chart_unit_missing";
     public const string ChartAxisLabelDensity = "chart_axis_label_density";
     public const string ChartAxisSeriesSemantics = "chart_axis_series_semantics";
+    public const string ChartPercentageAxisFormat = "chart_percentage_axis_format";
+    public const string ChartThresholdMissing = "chart_threshold_missing";
     public const string ExcelPrintLayout = "excel_print_layout";
     /// <summary>pptx-only, opt-in: deterministic slide layout checks that
     /// would be too opinionated for the default issue stream.</summary>
@@ -81,6 +83,7 @@ public static class IssueSubtypes
         TextOverflow, OffSlideContent, TextOcclusion, PptLayout,
         ChartSeriesRefMissingSheet, ChartCacheStale, ChartCategorySeriesMismatch,
         ChartSeriesNameMissing, ChartUnitMissing, ChartAxisLabelDensity, ChartAxisSeriesSemantics,
+        ChartPercentageAxisFormat, ChartThresholdMissing,
         ExcelPrintLayout,
         DefinedNameBroken, DefinedNameTargetMissing,
         BrokenPartRef,

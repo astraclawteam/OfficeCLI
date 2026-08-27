@@ -579,6 +579,23 @@ public partial class ExcelHandler
                 idx++;
             }
 
+            // Carry the source cell number format into the chart cache and
+            // value axis. Without this, a 0.01468 percentage series was drawn
+            // against a General/whole-number axis whose labels all rendered
+            // as 0. The first styled data cell is authoritative for the
+            // series; mixed formats remain explicit and are not guessed.
+            for (int r = dataStartRow; r <= endRow; r++)
+            {
+                var cellRef = $"{colName}{r}";
+                if (!cellTypeLookup.TryGetValue(cellRef, out var sourceCell))
+                    continue;
+                var (numFmtID, customCode) = ExcelDataFormatter.GetCellFormat(sourceCell, _doc.WorkbookPart);
+                var code = customCode ?? ExcelDataFormatter.ResolveBuiltInFormatCode(numFmtID);
+                if (!string.IsNullOrWhiteSpace(code) && !string.Equals(code, "General", StringComparison.OrdinalIgnoreCase))
+                    properties[$"series{seriesIdx}.valuesNumFmt"] = code;
+                break;
+            }
+
             // Set up cell references in properties for ApplySeriesReferences
             var valuesRef = $"{rangeSheetName}!${colName}${dataStartRow}:${colName}${endRow}";
             properties[$"series{seriesIdx}.name"] = seriesName;
@@ -724,6 +741,9 @@ public partial class ExcelHandler
                 double.TryParse(v, System.Globalization.CultureInfo.InvariantCulture, out var n) ? n : 0)
                 .ToArray();
             seriesData[i - 1] = (seriesData[i - 1].name, values);
+            var numberFormat = ResolveRangeNumberFormat(rangeRef, defaultSheetName);
+            if (!string.IsNullOrWhiteSpace(numberFormat))
+                properties[$"series{i}.valuesNumFmt"] = numberFormat;
         }
 
         // categories=<range>: ParseCategories returns null for a range, so the
@@ -802,5 +822,41 @@ public partial class ExcelHandler
                 result.Add(v ?? "");
             }
         return result;
+    }
+
+    private string? ResolveRangeNumberFormat(string rangeRef, string defaultSheetName)
+    {
+        string sheetName = defaultSheetName;
+        string rangePart = rangeRef.Trim();
+        var bangIdx = rangePart.IndexOf('!');
+        if (bangIdx >= 0)
+        {
+            sheetName = rangePart[..bangIdx].Trim('\'');
+            rangePart = rangePart[(bangIdx + 1)..];
+        }
+        var parts = rangePart.Replace("$", "").Split(':');
+        if (parts.Length != 2) return null;
+        var (startCol, startRow) = ParseCellReference(parts[0]);
+        var (endCol, endRow) = ParseCellReference(parts[1]);
+        var startColIndex = ColumnNameToIndex(startCol);
+        var endColIndex = ColumnNameToIndex(endCol);
+        var worksheet = FindWorksheet(sheetName);
+        var sheetData = worksheet == null ? null : GetSheet(worksheet).GetFirstChild<SheetData>();
+        if (sheetData == null) return null;
+
+        var cells = sheetData.Descendants<Cell>()
+            .Where(cell => cell.CellReference?.Value != null)
+            .ToDictionary(cell => cell.CellReference!.Value!, StringComparer.OrdinalIgnoreCase);
+        for (var row = startRow; row <= endRow; row++)
+        for (var col = startColIndex; col <= endColIndex; col++)
+        {
+            if (!cells.TryGetValue($"{IndexToColumnName(col)}{row}", out var cell))
+                continue;
+            var (numFmtID, customCode) = ExcelDataFormatter.GetCellFormat(cell, _doc.WorkbookPart);
+            var code = customCode ?? ExcelDataFormatter.ResolveBuiltInFormatCode(numFmtID);
+            if (!string.IsNullOrWhiteSpace(code) && !string.Equals(code, "General", StringComparison.OrdinalIgnoreCase))
+                return code;
+        }
+        return null;
     }
 }

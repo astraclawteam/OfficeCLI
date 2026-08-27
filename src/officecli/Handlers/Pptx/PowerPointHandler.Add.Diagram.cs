@@ -140,9 +140,10 @@ public partial class PowerPointHandler
         // diagram into a box on the UNCHANGED slide (a lone flowchart must not
         // silently resize someone's deck). `poster=true` is the explicit opt-in to
         // grow the slide to the whole diagram instead (export-a-diagram use case).
-        // x/y/width/height define the box, mirroring picture/chart; missing size →
-        // the slide's content area, missing position → centred. Uniform scale keeps
-        // the aspect ratio; the default (no size given) only shrinks, never enlarges.
+        // x/y/width/height define the box, mirroring picture/chart. Without an
+        // explicit box, reserve any wide title band already present near the top
+        // and use the remaining content area. Uniform scale keeps the aspect ratio
+        // while allowing a standalone diagram to use the available canvas.
         double natW = lo.SlideWidthCm, natH = lo.SlideHeightCm;
         bool hasX = properties.TryGetValue("x", out var xs);
         bool hasY = properties.TryGetValue("y", out var ys);
@@ -159,18 +160,36 @@ public partial class PowerPointHandler
             var (slideWEmu, slideHEmu) = GetSlideSize();
             double slideW = slideWEmu / CmToEmu, slideH = slideHEmu / CmToEmu;
             const double margin = 0.6;
-            double boxW = hasW ? ParseEmu(ws!) / CmToEmu : slideW - 2 * margin;
-            double boxH = hasH ? ParseEmu(hs!) / CmToEmu : slideH - 2 * margin;
+            double boxX = hasX ? ParseEmu(xs!) / CmToEmu : margin;
+            double boxY = hasY ? ParseEmu(ys!) / CmToEmu : margin;
+            if (!hasY && !hasH)
+            {
+                double occupiedTop = margin;
+                foreach (var existingShape in shapeTree.Elements<Shape>())
+                {
+                    var transform = existingShape.ShapeProperties?.Transform2D;
+                    if (transform?.Offset?.Y?.Value is not long titleYEmu
+                        || transform.Extents?.Cx?.Value is not long titleWidthEmu
+                        || transform.Extents.Cy?.Value is not long titleHeightEmu)
+                        continue;
+                    double titleY = titleYEmu / CmToEmu;
+                    double titleWidth = titleWidthEmu / CmToEmu;
+                    double titleHeight = titleHeightEmu / CmToEmu;
+                    if (titleY <= slideH * 0.3 && titleWidth >= slideW * 0.35 && titleHeight > 0)
+                        occupiedTop = Math.Max(occupiedTop, titleY + titleHeight + 0.35);
+                }
+                boxY = Math.Min(occupiedTop, Math.Max(margin, slideH - margin - 1.0));
+            }
+            double boxW = hasW ? ParseEmu(ws!) / CmToEmu : Math.Max(0.1, slideW - boxX - margin);
+            double boxH = hasH ? ParseEmu(hs!) / CmToEmu : Math.Max(0.1, slideH - boxY - margin);
             double fit = Math.Min(boxW / natW, boxH / natH);
-            sc = (hasW || hasH) ? fit : Math.Min(1.0, fit); // explicit box fills; default shrinks-only
+            sc = fit;
             // Uniform scale leaves slack on one axis; CENTRE the fitted diagram in
             // its box (slack split evenly) rather than pinning it to the top-left.
             // Mirrors the image path (AddDiagramAsImage) so native and PNG place
             // identically, and honours the "centred" contract for the default
             // (no-position) box: boxX=margin, boxW=slideW-2margin →
             // margin+(boxW-natW*sc)/2 == (slideW-natW*sc)/2, unchanged.
-            double boxX = hasX ? ParseEmu(xs!) / CmToEmu : margin;
-            double boxY = hasY ? ParseEmu(ys!) / CmToEmu : margin;
             ox = boxX + (boxW - natW * sc) / 2;
             oy = boxY + (boxH - natH * sc) / 2;
         }

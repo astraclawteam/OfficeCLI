@@ -97,9 +97,21 @@ public partial class WordHandler
             ApplyTableBorders(tblProps, bk, bv);
         }
 
-        // Parse data if provided: "H1,H2;R1C1,R1C2;R2C1,R2C2" or CSV file/URL/data-URI
+        // dataJson is the lossless form for business tables. It preserves
+        // delimiter-containing display text (for example "12,480") as one
+        // cell and rejects ragged rows before any OOXML is written.
         string[][]? tableData = null;
-        if (properties.TryGetValue("data", out var dataStr))
+        if (properties.TryGetValue("datajson", out var dataJsonStr)
+            || properties.TryGetValue("dataJson", out dataJsonStr))
+        {
+            if (properties.ContainsKey("data"))
+                throw new ArgumentException("Use either 'dataJson' or 'data', not both.");
+            var json = OfficeCli.Core.FileSource.IsResolvable(dataJsonStr)
+                ? OfficeCli.Core.FileSource.ResolveText(dataJsonStr)
+                : dataJsonStr;
+            tableData = OfficeCli.Core.DelimitedText.ParseJsonGrid(json);
+        }
+        else if (properties.TryGetValue("data", out var dataStr))
         {
             // Both forms are quote-aware: a cell wrapped in double quotes may
             // contain the separator, so `"Doe, John",30` is two cells. A plain
@@ -110,6 +122,7 @@ public partial class WordHandler
                     OfficeCli.Core.FileSource.ResolveText(dataStr), ',', '\n');
             else
                 tableData = OfficeCli.Core.DelimitedText.ParseGrid(dataStr, ',', ';');
+            OfficeCli.Core.DelimitedText.EnsureRectangular(tableData, "data");
         }
 
         int rows, cols;
@@ -123,7 +136,7 @@ public partial class WordHandler
                     "Table 'data' is empty — provide at least one cell (e.g. data=\"a,b;c,d\"), "
                     + "or omit 'data' and pass rows=/cols= to create a blank table.");
             rows = tableData.Length;
-            cols = tableData.Max(r => r.Length);
+            cols = tableData[0].Length;
             // ParseGrid drops all-empty rows (blank-line skip, right for CSV
             // import). When the caller ALSO gave explicit rows=/cols=, honor them
             // as a floor so `data="H1,H2;,," rows=2` still makes a 2-row table
