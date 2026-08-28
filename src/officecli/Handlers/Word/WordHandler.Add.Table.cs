@@ -355,7 +355,7 @@ public partial class WordHandler
             // `data` (inline cell content), like rows/cols/colwidths, is fully
             // consumed earlier (TryGetValue("data") above) — skip it here so the
             // tblPr switch default doesn't falsely flag it as unsupported_property.
-            if (tkl is "rows" or "cols" or "columns" or "colwidths" or "gridcols" or "skiptblw" or "skiptbllook" or "skipdefaultborders" or "data" || tkl.StartsWith("border")) continue;
+            if (tkl is "rows" or "cols" or "columns" or "colwidths" or "gridcols" or "skiptblw" or "skiptbllook" or "skipdefaultborders" or "data" or "datajson" || tkl.StartsWith("border")) continue;
             // ACCOUNTING(handler-as-truth): see AddStyle. ContainsKey only
             // when the switch will consume this key — otherwise typos would
             // leak past UnusedKeys detection.

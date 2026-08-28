@@ -61,7 +61,10 @@ internal static class ChartSemanticInspector
         }
         var valueAxis = plotArea.GetFirstChild<C.ValueAxis>();
         var axisFormat = valueAxis?.GetFirstChild<C.NumberingFormat>()?.FormatCode?.Value ?? "";
-        var hasPercentageSeries = series.Any(item => SeriesFormatCode(item).Contains('%'));
+        var titleText = chartSpace.GetFirstChild<C.Chart>()?.GetFirstChild<C.Title>()?.InnerText ?? "";
+        var declaredThreshold = PercentageThreshold(titleText);
+        var hasPercentageSeries = series.Any(item => SeriesFormatCode(item).Contains('%'))
+            || (declaredThreshold != null && series.Any(SeriesValuesAreFractions));
         if (hasPercentageSeries && !axisFormat.Contains('%'))
         {
             findings.Add(new(
@@ -70,8 +73,6 @@ internal static class ChartSemanticInspector
                 "Set axisNumFmt to a percentage format such as 0.0%, or let the chart inherit the source series number format."));
         }
 
-        var titleText = chartSpace.GetFirstChild<C.Chart>()?.GetFirstChild<C.Title>()?.InnerText ?? "";
-        var declaredThreshold = PercentageThreshold(titleText);
         if (declaredThreshold != null && !HasConstantThresholdSeries(series, declaredThreshold.Value))
         {
             findings.Add(new(
@@ -137,6 +138,19 @@ internal static class ChartSemanticInspector
             .FirstOrDefault(element => element.LocalName is "val" or "yVal" or "bubbleSize")?
             .Descendants<OpenXmlElement>()
             .FirstOrDefault(element => element.LocalName == "formatCode")?.InnerText ?? "";
+
+    private static bool SeriesValuesAreFractions(OpenXmlCompositeElement series)
+    {
+        var values = SeriesValues(series)
+            .Select(value => double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var number)
+                ? (double?)number : null)
+            .Where(value => value.HasValue)
+            .Select(value => value!.Value)
+            .ToList();
+        return values.Count > 0
+            && values.Any(value => Math.Abs(value) > 1e-12)
+            && values.All(value => Math.Abs(value) <= 1d);
+    }
 
     private static double? PercentageThreshold(string title)
     {
