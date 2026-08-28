@@ -82,6 +82,12 @@ public sealed class OfficeEvidenceTests
         Assert.True(profile.Formats.ContainsKey("pptx"));
         var asset = Assert.Single(profile.Assets);
         Assert.Equal("workbook-media-candidate", asset.Role);
+        Assert.StartsWith("asset-", asset.AssetId, StringComparison.Ordinal);
+        Assert.Equal($"sha256:{asset.Sha256}", asset.DuplicateGroup);
+        Assert.Equal("candidate", asset.ClassificationStatus);
+        Assert.Equal("candidate", asset.ApprovalStatus);
+        Assert.Equal("unknown", asset.Orientation);
+        Assert.Equal(new[] { "xl/media/image1.png" }, asset.SourceLocators);
         Assert.True(File.Exists(Path.Combine(temp.File("assets"), asset.FileName)));
         Assert.Equal("acme-brand", theme["themeId"]);
         var serialized = JsonSerializer.Serialize(profile, OfficeEvidenceJsonContext.Default.OfficeBrandProfile);
@@ -110,7 +116,67 @@ public sealed class OfficeEvidenceTests
 
         var logoAsset = Assert.Single(profile.Assets);
         Assert.Equal("logo", logoAsset.Role);
+        Assert.Equal("source-context", logoAsset.ClassificationStatus);
+        Assert.Equal("candidate", logoAsset.ApprovalStatus);
         Assert.Equal("ppt/media/logo.png", logoAsset.PackagePath);
+    }
+
+    [Fact]
+    public void BrandExtractionDeduplicatesMediaAndUsesContentStableAssetIdentity()
+    {
+        using var temp = new TempDirectory();
+        var path = temp.File("duplicate-media.pptx");
+        var png = new byte[]
+        {
+            0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+            0, 0, 0, 13, 0x49, 0x48, 0x44, 0x52,
+            0, 0, 0, 2, 0, 0, 0, 1,
+        };
+        using (var archive = ZipFile.Open(path, ZipArchiveMode.Create))
+        {
+            var types = archive.CreateEntry("[Content_Types].xml");
+            using (var writer = new StreamWriter(types.Open()))
+                writer.Write("<Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\"/>");
+            foreach (var name in new[] { "ppt/media/image1.png", "ppt/media/image2.png" })
+            {
+                var media = archive.CreateEntry(name);
+                using var stream = media.Open();
+                stream.Write(png);
+            }
+        }
+
+        var (profile, _) = OfficePackageEvidence.ExtractBrand(
+            path, "deduplicated-brand", "去重品牌", temp.File("assets"));
+
+        var asset = Assert.Single(profile.Assets);
+        Assert.Equal(2, asset.PixelWidth);
+        Assert.Equal(1, asset.PixelHeight);
+        Assert.Equal("landscape", asset.Orientation);
+        Assert.Equal(2, asset.SourceLocators.Count);
+        Assert.Equal($"asset-{asset.Sha256[..20]}", asset.AssetId);
+    }
+
+    [Fact]
+    public void BrandExtractionIncludesRootMediaProducedByPortableWordWriter()
+    {
+        using var temp = new TempDirectory();
+        var path = temp.File("portable-writer.docx");
+        using (var archive = ZipFile.Open(path, ZipArchiveMode.Create))
+        {
+            var types = archive.CreateEntry("[Content_Types].xml");
+            using (var writer = new StreamWriter(types.Open()))
+                writer.Write("<Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\"/>");
+            var media = archive.CreateEntry("media/image.png");
+            using var stream = media.Open();
+            stream.Write(new byte[] { 0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a });
+        }
+
+        var (profile, _) = OfficePackageEvidence.ExtractBrand(
+            path, "portable-writer", "便携写入器", temp.File("assets"));
+
+        var asset = Assert.Single(profile.Assets);
+        Assert.Equal("media/image.png", asset.PackagePath);
+        Assert.Equal(new[] { "media/image.png" }, asset.SourceLocators);
     }
 
     [Fact]
