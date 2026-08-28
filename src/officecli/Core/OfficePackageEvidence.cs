@@ -50,7 +50,14 @@ internal sealed record OfficeBrandAsset(
     string Sha256,
     long SizeBytes,
     string PackagePath,
-    string Role);
+    string Role,
+    int? PixelWidth,
+    int? PixelHeight,
+    string Orientation,
+    string DuplicateGroup,
+    string ClassificationStatus,
+    string ApprovalStatus,
+    IReadOnlyList<string> SourceLocators);
 
 internal sealed record OfficeBrandSource(
     string Format,
@@ -202,19 +209,46 @@ internal static class OfficePackageEvidence
         Directory.CreateDirectory(assetDirectory);
         var assets = new List<OfficeBrandAsset>();
         var logoMedia = FindLogoMediaCandidates(archive, snapshot.Format);
-        foreach (var entry in archive.Entries.Where(IsBrandMediaCandidate).OrderBy(entry => Normalize(entry.FullName), StringComparer.Ordinal))
+        var mediaGroups = archive.Entries
+            .Where(IsBrandMediaCandidate)
+            .OrderBy(entry => Normalize(entry.FullName), StringComparer.Ordinal)
+            .Select(entry => new
+            {
+                Entry = entry,
+                Bytes = ReadEntryBytes(entry),
+            })
+            .Select(item => new
+            {
+                item.Entry,
+                item.Bytes,
+                Digest = Convert.ToHexString(SHA256.HashData(item.Bytes)).ToLowerInvariant(),
+            })
+            .GroupBy(item => item.Digest, StringComparer.Ordinal)
+            .OrderBy(group => group.Key, StringComparer.Ordinal);
+        foreach (var group in mediaGroups)
         {
-            var bytes = ReadEntryBytes(entry);
-            var digest = Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
+            var first = group.First();
+            var entry = first.Entry;
+            var bytes = first.Bytes;
+            var digest = group.Key;
+            var sourceLocators = group
+                .Select(item => Normalize(item.Entry.FullName))
+                .Distinct(StringComparer.Ordinal)
+                .Order(StringComparer.Ordinal)
+                .ToArray();
             var extension = Path.GetExtension(entry.Name).ToLowerInvariant();
             var fileName = $"asset-{assets.Count + 1:D2}-{digest[..12]}{extension}";
             var target = Path.Combine(assetDirectory, fileName);
             File.WriteAllBytes(target, bytes);
+            using var imageStream = new MemoryStream(bytes, writable: false);
+            var dimensions = ImageSource.TryGetDimensions(imageStream);
+            var isLogo = sourceLocators.Any(logoMedia.Contains);
             assets.Add(new OfficeBrandAsset(
-                $"brand-asset-{assets.Count + 1:D2}", fileName, digest, bytes.LongLength,
-                Normalize(entry.FullName), logoMedia.Contains(Normalize(entry.FullName))
-                    ? "logo"
-                    : ClassifyBrandAssetRole(snapshot.Format)));
+                $"asset-{digest[..20]}", fileName, digest, bytes.LongLength,
+                sourceLocators[0], isLogo ? "logo" : ClassifyBrandAssetRole(snapshot.Format),
+                dimensions?.Width, dimensions?.Height, ClassifyOrientation(dimensions),
+                $"sha256:{digest}", isLogo ? "source-context" : "candidate",
+                "candidate", sourceLocators));
         }
 
         var formats = BuildFormatProfile(snapshot, archive);
@@ -235,6 +269,16 @@ internal static class OfficePackageEvidence
             ["formats"] = formats,
         };
         return (profile, theme);
+    }
+
+    private static string ClassifyOrientation((int Width, int Height)? dimensions)
+    {
+        if (dimensions is null) return "unknown";
+        var (width, height) = dimensions.Value;
+        var ratio = (double)width / height;
+        if (ratio >= 1.1) return "landscape";
+        if (ratio <= 0.9) return "portrait";
+        return "square";
     }
 
     internal static OfficeFidelitySnapshot ReadSnapshot(string path)
@@ -504,7 +548,11 @@ internal static class OfficePackageEvidence
     }
 
     private static bool IsBrandMediaCandidate(ZipArchiveEntry entry) =>
-        !string.IsNullOrEmpty(entry.Name) && Normalize(entry.FullName).Contains("/media/", StringComparison.OrdinalIgnoreCase) && entry.Length <= 16 * 1024 * 1024;
+        !string.IsNullOrEmpty(entry.Name) && IsMediaPackagePath(Normalize(entry.FullName)) && entry.Length <= 16 * 1024 * 1024;
+
+    private static bool IsMediaPackagePath(string path) =>
+        path.StartsWith("media/", StringComparison.OrdinalIgnoreCase)
+        || path.Contains("/media/", StringComparison.OrdinalIgnoreCase);
 
     private static string ClassifyBrandAssetRole(string format)
     {
@@ -543,7 +591,7 @@ internal static class OfficePackageEvidence
                     || targetMode.Equals("External", StringComparison.OrdinalIgnoreCase))
                     continue;
                 var resolved = ResolvePackageTarget(ownerDirectory, target);
-                if (resolved.Contains("/media/", StringComparison.OrdinalIgnoreCase)) candidates.Add(resolved);
+                if (IsMediaPackagePath(resolved)) candidates.Add(resolved);
             }
         }
         return candidates;

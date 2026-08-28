@@ -48,11 +48,22 @@ internal class LenientStringDictionaryConverter : JsonConverter<Dictionary<strin
                 JsonTokenType.True => "true",
                 JsonTokenType.False => "false",
                 JsonTokenType.Null => "",
+                // Batch props ultimately cross the same string-valued command
+                // boundary as --prop. Preserve structured values as their
+                // canonical JSON text so lossless inputs such as dataJson can
+                // use natural arrays/objects instead of double-encoded JSON.
+                JsonTokenType.StartArray or JsonTokenType.StartObject => ReadRawJson(ref reader),
                 _ => throw new JsonException($"Unexpected token {reader.TokenType} for prop value '{key}'")
             };
             dict[key] = value;
         }
         throw new JsonException("Unexpected end of JSON");
+    }
+
+    private static string ReadRawJson(ref Utf8JsonReader reader)
+    {
+        using var value = JsonDocument.ParseValue(ref reader);
+        return value.RootElement.GetRawText();
     }
 
     public override void Write(Utf8JsonWriter writer, Dictionary<string, string> value, JsonSerializerOptions options)
