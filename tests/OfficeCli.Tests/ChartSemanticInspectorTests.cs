@@ -69,6 +69,38 @@ public class ChartSemanticInspectorTests
     }
 
     [Fact]
+    public void DetectsPercentageAxisFromDeclaredThresholdWhenSeriesFormatIsGeneral()
+    {
+        var series = new C.LineChartSeries(
+            new C.Index { Val = 0U }, new C.Order { Val = 0U },
+            new C.SeriesText(new C.NumericValue("错误回答率")),
+            new C.CategoryAxisData(new C.StringLiteral(
+                new C.PointCount { Val = 2U },
+                new C.StringPoint(new C.NumericValue("第1周")) { Index = 0U },
+                new C.StringPoint(new C.NumericValue("第2周")) { Index = 1U })),
+            new C.Values(new C.NumberLiteral(
+                new C.FormatCode("General"), new C.PointCount { Val = 2U },
+                new C.NumericPoint(new C.NumericValue("0.014")) { Index = 0U },
+                new C.NumericPoint(new C.NumericValue("0.006")) { Index = 1U })));
+        var titleText = new C.RichText(
+            new DocumentFormat.OpenXml.Drawing.BodyProperties(),
+            new DocumentFormat.OpenXml.Drawing.ListStyle(),
+            new DocumentFormat.OpenXml.Drawing.Paragraph(
+                new DocumentFormat.OpenXml.Drawing.Run(
+                    new DocumentFormat.OpenXml.Drawing.Text("错误回答率（扩大门槛 0.5%）"))));
+        var chart = new C.Chart(
+            new C.Title(new C.ChartText(titleText)),
+            new C.PlotArea(
+                new C.LineChart(series),
+                new C.ValueAxis(new C.NumberingFormat { FormatCode = "0", SourceLinked = false })));
+
+        var findings = ChartSemanticInspector.Inspect(new C.ChartSpace(chart));
+
+        Assert.Contains(findings, item => item.Subtype == IssueSubtypes.ChartPercentageAxisFormat);
+        Assert.Contains(findings, item => item.Subtype == IssueSubtypes.ChartThresholdMissing);
+    }
+
+    [Fact]
     public void DetectsCategoryCountMissingSeriesNameAndPercentageUnit()
     {
         var series = new C.BarChartSeries(

@@ -1,5 +1,7 @@
 using OfficeCli.Core;
+using OfficeCli.Handlers;
 using System.Text.Json;
+using DocumentFormat.OpenXml.Packaging;
 using Xunit;
 
 namespace OfficeCli.Tests;
@@ -59,5 +61,25 @@ public class DelimitedTextTests
         var rows = DelimitedText.ParseJsonGrid(dataJson);
         Assert.Equal("12,480", rows[1][1]);
         Assert.Equal(2, rows[1].Length);
+    }
+
+    [Fact]
+    public void WordTableDataJsonIsConsumedWithoutUnsupportedPropertyWarning()
+    {
+        using var temp = new TempDirectory();
+        var path = temp.File("data-json.docx");
+        OpenXmlFixture.CreateDocument(path);
+        using (var handler = new WordHandler(path, editable: true))
+        {
+            handler.Add("/body", "table", null, new Dictionary<string, string>
+            {
+                ["dataJson"] = "[[\"指标\",\"结果\"],[\"总会话量\",\"12,480\"]]",
+            });
+            Assert.Empty(handler.LastAddUnsupportedProps);
+        }
+
+        using var document = WordprocessingDocument.Open(path, false);
+        var tableText = document.MainDocumentPart!.Document.Body!.InnerText;
+        Assert.Contains("12,480", tableText);
     }
 }
