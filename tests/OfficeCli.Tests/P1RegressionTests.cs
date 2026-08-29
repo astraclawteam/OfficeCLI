@@ -251,6 +251,36 @@ public sealed class P1RegressionTests
     }
 
     [Fact]
+    public void ExcelPrintGateHonorsWpsDefaultFitToWidth()
+    {
+        using var temp = new TempDirectory();
+        var path = temp.File("wps-print-default.xlsx");
+        OpenXmlFixture.CreateWorkbook(path, "Dashboard");
+        using (var doc = SpreadsheetDocument.Open(path, true))
+        {
+            var worksheet = doc.WorkbookPart!.WorksheetParts.Single().Worksheet;
+            var row = new Row { RowIndex = 1 };
+            for (var column = 'A'; column <= 'H'; column++)
+                row.Append(new Cell { CellReference = $"{column}1", DataType = CellValues.String, CellValue = new CellValue(column.ToString()) });
+            worksheet.GetFirstChild<SheetData>()!.Append(row);
+            worksheet.SheetProperties = new SheetProperties(new PageSetupProperties { FitToPage = true });
+            worksheet.Append(new PageSetup { FitToHeight = 0U, Orientation = OrientationValues.Landscape });
+            doc.WorkbookPart.Workbook.DefinedNames ??= new DefinedNames();
+            doc.WorkbookPart.Workbook.DefinedNames.Append(new DefinedName("'Dashboard'!$A$1:$H$1")
+            {
+                Name = "_xlnm.Print_Area", LocalSheetId = 0U,
+            });
+            worksheet.Save();
+            doc.WorkbookPart.Workbook.Save();
+        }
+
+        using var handler = new ExcelHandler(path, editable: false);
+        var issues = handler.ViewAsIssues();
+
+        Assert.DoesNotContain(issues, issue => issue.Subtype == IssueSubtypes.ExcelPrintLayout);
+    }
+
+    [Fact]
     public void ExcelPreviewHonorsHiddenGridlinesAndRowColumnHeaders()
     {
         using var temp = new TempDirectory();

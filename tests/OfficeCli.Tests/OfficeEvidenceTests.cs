@@ -4,11 +4,68 @@ using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Spreadsheet;
 using OfficeCli.Core;
 using Xunit;
+using C = DocumentFormat.OpenXml.Drawing.Charts;
 
 namespace OfficeCli.Tests;
 
 public sealed class OfficeEvidenceTests
 {
+
+    [Fact]
+    public void FidelityManifestAcceptsSemanticallyIdenticalWpsChartRelocation()
+    {
+        using var temp = new TempDirectory();
+        var path = temp.File("wps-chart-relocation.xlsx");
+        OpenXmlFixture.CreateWorkbook(path, "Dashboard");
+        const string chart = "<c:chartSpace xmlns:c=\"http://schemas.openxmlformats.org/drawingml/2006/chart\"><c:chart><c:plotArea><c:barChart><c:ser><c:idx val=\"0\"/><c:order val=\"0\"/><c:tx><c:v>收入</c:v></c:tx><c:cat><c:strRef><c:f>Dashboard!$A$2:$A$4</c:f></c:strRef></c:cat><c:val><c:numRef><c:f>Dashboard!$B$2:$B$4</c:f></c:numRef></c:val></c:ser></c:barChart></c:plotArea></c:chart></c:chartSpace>";
+        using (var archive = ZipFile.Open(path, ZipArchiveMode.Update))
+        {
+            var entry = archive.CreateEntry("xl/drawings/charts/chart1.xml");
+            using var writer = new StreamWriter(entry.Open());
+            writer.Write(chart);
+        }
+        var snapshot = OfficePackageEvidence.Snapshot(path);
+        using (var archive = ZipFile.Open(path, ZipArchiveMode.Update))
+        {
+            archive.GetEntry("xl/drawings/charts/chart1.xml")!.Delete();
+            var entry = archive.CreateEntry("xl/charts/chart1.xml");
+            using var writer = new StreamWriter(entry.Open());
+            writer.Write(chart.Replace("><", ">\n<", StringComparison.Ordinal));
+        }
+
+        var manifest = OfficePackageEvidence.Diff(snapshot, path);
+
+        Assert.True(manifest.Passed);
+        Assert.Empty(manifest.RemovedParts);
+        Assert.Equal(1d, manifest.FormatRetentionRate);
+    }
+
+    [Fact]
+    public void WpsShowLeaderLinesExtensionIsNotReportedAsSchemaDamage()
+    {
+        using var temp = new TempDirectory();
+        var path = temp.File("wps-chart-extension.xlsx");
+        OpenXmlFixture.CreateWorkbook(path, "Dashboard");
+        using var document = SpreadsheetDocument.Open(path, true);
+        var drawings = document.WorkbookPart!.WorksheetParts.Single().AddNewPart<DrawingsPart>();
+        var chartPart = drawings.AddNewPart<ChartPart>();
+        var extension = new C.Extension { Uri = "{CE6537A1-D6FC-4f65-9D91-7224C49458BB}" };
+        var showLeaderLines = new DocumentFormat.OpenXml.OpenXmlUnknownElement(
+            "c15", "showLeaderLines", "http://schemas.microsoft.com/office/drawing/2012/chart");
+        showLeaderLines.SetAttribute(new DocumentFormat.OpenXml.OpenXmlAttribute("", "val", "", "1"));
+        extension.Append(showLeaderLines);
+        chartPart.ChartSpace = new C.ChartSpace(new C.Chart(new C.PlotArea(
+            new C.BarChart(new C.BarDirection { Val = C.BarDirectionValues.Column },
+                new C.BarGrouping { Val = C.BarGroupingValues.Clustered },
+                new C.BarChartSeries(new C.Index { Val = 0U }, new C.Order { Val = 0U },
+                    new C.DataLabels(new C.ExtensionList(extension)))))));
+        chartPart.ChartSpace.Save();
+
+        var errors = RawXmlHelper.ValidateDocument(document, path);
+
+        Assert.DoesNotContain(errors, error => error.Description.Contains("showLeaderLines", StringComparison.Ordinal));
+    }
+
     [Fact]
     public void FidelityManifestSeparatesContentChangeFromPreservedPackageEvidence()
     {
