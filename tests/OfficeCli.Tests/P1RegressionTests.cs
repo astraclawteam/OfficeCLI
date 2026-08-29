@@ -435,4 +435,51 @@ public sealed class P1RegressionTests
             i.Message.Contains("no arrowhead", StringComparison.OrdinalIgnoreCase));
     }
 
+    [Fact]
+    public void PptAuditBlocksImplicitKpiWrapThatSplitsUnitsInWps()
+    {
+        using var temp = new TempDirectory();
+        var path = temp.File("wps-kpi-wrap.pptx");
+        BlankDocCreator.Create(path, "zh-CN");
+        using (var handler = new PowerPointHandler(path, editable: true))
+        {
+            handler.Add("/", "slide", null, new Dictionary<string, string>());
+            handler.Add("/slide[1]", "shape", null, new Dictionary<string, string>
+            {
+                ["text"] = "CNY 12.80M  ·  106.7%",
+                ["x"] = "492pt", ["y"] = "136pt", ["width"] = "180pt", ["height"] = "88pt",
+                ["font.size"] = "19pt", ["margin"] = "10pt", ["geometry"] = "roundRect",
+                ["autoFit"] = "normal",
+            });
+        }
+
+        using var audit = new PowerPointHandler(path, editable: false);
+        Assert.Contains(audit.ViewAsIssues(), issue =>
+            issue.Subtype == IssueSubtypes.TextOverflow
+            && issue.Message.Contains("cross-suite text wrap risk", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void PptAuditBlocksPercentSignDetachedByWpsSave()
+    {
+        using var temp = new TempDirectory();
+        var path = temp.File("wps-detached-percent.pptx");
+        BlankDocCreator.Create(path, "zh-CN");
+        using (var handler = new PowerPointHandler(path, editable: true))
+        {
+            handler.Add("/", "slide", null, new Dictionary<string, string>());
+            handler.Add("/slide[1]", "shape", null, new Dictionary<string, string>
+            {
+                ["text"] = "106.7\n%",
+                ["x"] = "524pt", ["y"] = "360pt", ["width"] = "140pt", ["height"] = "74pt",
+                ["font.size"] = "25pt", ["geometry"] = "roundRect", ["autoFit"] = "normal",
+            });
+        }
+
+        using var audit = new PowerPointHandler(path, editable: false);
+        Assert.Contains(audit.ViewAsIssues(), issue =>
+            issue.Subtype == IssueSubtypes.TextOverflow
+            && issue.Message.Contains("separate lines", StringComparison.Ordinal));
+    }
+
 }
