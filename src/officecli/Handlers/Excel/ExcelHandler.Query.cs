@@ -346,8 +346,9 @@ public partial class ExcelHandler
                     sheetNode.Format["orientation"] = pageSetup.Orientation.InnerText;
                 if (pageSetup.PaperSize?.HasValue == true)
                     sheetNode.Format["paperSize"] = (int)pageSetup.PaperSize.Value;
-                if (pageSetup.FitToWidth?.HasValue == true)
-                    sheetNode.Format["fitToPage"] = $"{pageSetup.FitToWidth.Value}x{pageSetup.FitToHeight?.Value ?? 1}";
+                var fitToPage = ws.SheetProperties?.PageSetupProperties?.FitToPage?.Value == true;
+                if (pageSetup.FitToWidth?.HasValue == true || fitToPage)
+                    sheetNode.Format["fitToPage"] = $"{pageSetup.FitToWidth?.Value ?? 1}x{pageSetup.FitToHeight?.Value ?? 1}";
             }
 
             // Print area readback

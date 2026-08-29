@@ -14,7 +14,8 @@ internal sealed record OfficePackagePartEvidence(
     string Path,
     string Sha256,
     long SizeBytes,
-    string Role);
+    string Role,
+    string? SemanticSha256 = null);
 
 internal sealed record OfficeFidelitySnapshot(
     int SchemaVersion,
@@ -126,8 +127,13 @@ internal static class OfficePackageEvidence
         var parts = archive.Entries
             .Where(entry => !string.IsNullOrEmpty(entry.Name))
             .OrderBy(entry => Normalize(entry.FullName), StringComparer.Ordinal)
-            .Select(entry => new OfficePackagePartEvidence(
-                Normalize(entry.FullName), HashEntry(entry), entry.Length, ClassifyPart(format, Normalize(entry.FullName))))
+            .Select(entry =>
+            {
+                var path = Normalize(entry.FullName);
+                return new OfficePackagePartEvidence(
+                    path, HashEntry(entry), entry.Length, ClassifyPart(format, path),
+                    ChartSemanticSha256(entry, path));
+            })
             .ToArray();
         var features = ExtractFeatures(format, archive);
         return new OfficeFidelitySnapshot(
@@ -147,7 +153,30 @@ internal static class OfficePackageEvidence
         var preserved = left.Keys.Intersect(right.Keys, StringComparer.Ordinal)
             .Where(path => left[path].Sha256 == right[path].Sha256).Order(StringComparer.Ordinal).ToArray();
         var added = right.Keys.Except(left.Keys, StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
-        var removed = left.Keys.Except(right.Keys, StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
+        var removedCandidates = left.Keys.Except(right.Keys, StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
+        // WPS legally relocates charts from xl/drawings/charts to xl/charts on
+        // save.  A path-only diff reports that as destructive loss even when
+        // the chart's type, series, formulas, cached values, axes and title are
+        // unchanged.  Pair only chart parts with the same non-empty semantic
+        // digest; an actually changed/deleted chart still remains removed and
+        // blocks fidelity.
+        var addedRelocationCandidates = added
+            .Select(path => right[path])
+            .Where(part => part.SemanticSha256 is { Length: > 0 } && IsChartPart(part.Path))
+            .GroupBy(part => part.SemanticSha256!, StringComparer.Ordinal)
+            .ToDictionary(group => group.Key, group => new Queue<OfficePackagePartEvidence>(group), StringComparer.Ordinal);
+        var relocated = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var path in removedCandidates)
+        {
+            var part = left[path];
+            if (part.SemanticSha256 is not { Length: > 0 } || !IsChartPart(path)
+                || !addedRelocationCandidates.TryGetValue(part.SemanticSha256, out var matches)
+                || matches.Count == 0)
+                continue;
+            matches.Dequeue();
+            relocated.Add(path);
+        }
+        var removed = removedCandidates.Where(path => !relocated.Contains(path)).ToArray();
 
         var featureNames = before.Features.Keys.Union(after.Features.Keys, StringComparer.Ordinal).Order(StringComparer.Ordinal);
         var featureChanges = featureNames.Select(name =>
@@ -159,7 +188,7 @@ internal static class OfficePackageEvidence
         }).ToArray();
 
         var protectedBefore = before.Parts.Where(part => part.Role != "content").Select(part => part.Path).ToHashSet(StringComparer.Ordinal);
-        var protectedRetained = protectedBefore.Count(right.ContainsKey);
+        var protectedRetained = protectedBefore.Count(path => right.ContainsKey(path) || relocated.Contains(path));
         var protectedPreserved = protectedBefore.Count(path => right.TryGetValue(path, out var part) && part.Sha256 == left[path].Sha256);
         var retention = protectedBefore.Count == 0 ? 1d : Math.Round((double)protectedRetained / protectedBefore.Count, 6);
         var bytePreservation = protectedBefore.Count == 0 ? 1d : Math.Round((double)protectedPreserved / protectedBefore.Count, 6);
@@ -617,6 +646,67 @@ internal static class OfficePackageEvidence
     {
         using var stream = entry.Open();
         return Convert.ToHexString(SHA256.HashData(stream)).ToLowerInvariant();
+    }
+
+    private static bool IsChartPart(string path) =>
+        path.EndsWith(".xml", StringComparison.OrdinalIgnoreCase)
+        && path.Contains("/charts/chart", StringComparison.OrdinalIgnoreCase);
+
+    private static string? ChartSemanticSha256(ZipArchiveEntry entry, string path)
+    {
+        if (!IsChartPart(path)) return null;
+        try
+        {
+            var document = XDocument.Parse(ReadEntryText(entry));
+            var chartTypes = new HashSet<string>(StringComparer.Ordinal)
+            {
+                "areaChart", "area3DChart", "barChart", "bar3DChart", "bubbleChart",
+                "doughnutChart", "lineChart", "line3DChart", "ofPieChart", "pieChart",
+                "pie3DChart", "radarChart", "scatterChart", "stockChart", "surfaceChart",
+                "surface3DChart",
+            };
+            var parts = new List<string>();
+            string Attribute(XElement node, string name) =>
+                node.Attributes().FirstOrDefault(attribute => attribute.Name.LocalName == name)?.Value ?? "";
+            string LeafValues(XElement? node) => node is null ? "" : string.Join("|", node.Descendants()
+                .Where(child => child.Name.LocalName is "v" or "t")
+                .Select(child => Regex.Replace(child.Value.Trim(), @"\s+", " "))
+                .Where(value => value.Length > 0));
+            string Formula(XElement? node) => node?.Descendants()
+                .FirstOrDefault(child => child.Name.LocalName == "f")?.Value.Trim() ?? "";
+
+            foreach (var node in document.Descendants().Where(node => chartTypes.Contains(node.Name.LocalName)))
+                parts.Add("type=" + node.Name.LocalName);
+            var title = document.Descendants().FirstOrDefault(node => node.Name.LocalName == "title");
+            parts.Add("title=" + LeafValues(title));
+            var seriesIndex = 0;
+            foreach (var series in document.Descendants().Where(node => node.Name.LocalName == "ser"))
+            {
+                var tx = series.Elements().FirstOrDefault(node => node.Name.LocalName == "tx");
+                var category = series.Elements().FirstOrDefault(node => node.Name.LocalName is "cat" or "xVal");
+                var values = series.Elements().FirstOrDefault(node => node.Name.LocalName is "val" or "yVal");
+                var index = series.Elements().FirstOrDefault(node => node.Name.LocalName == "idx");
+                var order = series.Elements().FirstOrDefault(node => node.Name.LocalName == "order");
+                parts.Add($"series[{seriesIndex++}].index={Attribute(index ?? series, "val")}");
+                parts.Add("series.order=" + Attribute(order ?? series, "val"));
+                parts.Add("series.name=" + LeafValues(tx));
+                parts.Add("series.categoryFormula=" + Formula(category));
+                parts.Add("series.categories=" + LeafValues(category));
+                parts.Add("series.valueFormula=" + Formula(values));
+                parts.Add("series.values=" + LeafValues(values));
+            }
+            foreach (var name in new[] { "axId", "crossAx", "min", "max", "legendPos", "dispBlanksAs" })
+                foreach (var node in document.Descendants().Where(node => node.Name.LocalName == name))
+                    parts.Add(name + "=" + Attribute(node, "val"));
+            foreach (var node in document.Descendants().Where(node => node.Name.LocalName == "numFmt"
+                && node.Ancestors().Any(parent => parent.Name.LocalName is "catAx" or "dateAx" or "serAx" or "valAx")))
+                parts.Add("numFmt=" + Attribute(node, "formatCode"));
+            return Convert.ToHexString(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(string.Join("\n", parts)))).ToLowerInvariant();
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     private static string HashFileShared(string path)

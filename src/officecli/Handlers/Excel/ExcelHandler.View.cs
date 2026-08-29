@@ -837,7 +837,13 @@ public partial class ExcelHandler
                 .Select(value => value.Aggregate(0, (number, letter) => checked(number * 26 + char.ToUpperInvariant(letter) - 'A' + 1)))
                 .DefaultIfEmpty(0).Max();
             var setup = sheet.GetFirstChild<PageSetup>();
-            var fitToOnePageWide = setup?.FitToWidth?.Value == 1;
+            var fitToPage = sheet.SheetProperties?.PageSetupProperties?.FitToPage?.Value == true;
+            // fitToWidth defaults to 1 in SpreadsheetML. WPS commonly omits the
+            // explicit attribute while retaining sheetPr/pageSetUpPr@fitToPage;
+            // treating that legal default as "unset" produces a false print
+            // regression after an otherwise lossless WPS save.
+            var effectiveFitToWidth = setup?.FitToWidth?.Value ?? (fitToPage ? 1U : 0U);
+            var fitToOnePageWide = effectiveFitToWidth == 1;
             var printArea = _doc.WorkbookPart?.Workbook?.DefinedNames?.Elements<DefinedName>()
                 .Any(name => name.Name?.Value == "_xlnm.Print_Area" && name.LocalSheetId?.Value == (uint)printSheetIndex) == true;
             if (maxColumn >= 8 && (!fitToOnePageWide || !printArea))
@@ -847,7 +853,7 @@ public partial class ExcelHandler
                     Id = $"P{++issueNum}", Type = IssueType.Format, Subtype = Core.IssueSubtypes.ExcelPrintLayout,
                     Severity = IssueSeverity.Warning, Path = $"/{sheetName}",
                     Message = $"Wide worksheet uses {maxColumn} column(s) without a complete one-page-wide print contract.",
-                    Context = $"fitToWidth={(setup?.FitToWidth?.Value.ToString() ?? "unset")}, printArea={printArea}",
+                    Context = $"fitToWidth={effectiveFitToWidth}, printArea={printArea}",
                     Suggestion = "Set an explicit print area, paper size and orientation, then use fitToWidth=1 and inspect the final PDF.",
                 });
             }

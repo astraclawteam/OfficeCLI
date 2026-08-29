@@ -696,6 +696,12 @@ internal static class RawXmlHelper
         // it would fail `validate` (and the Delivery Gate) over a gap in the
         // OpenXmlValidator's schema model, not a real defect.
         errors.RemoveAll(IsBenignChartExValAttributeError);
+        // WPS emits the Office 2012 chart extension showLeaderLines inside a
+        // standard c:ext container.  The SDK Microsoft365 schema still reports
+        // it as an unexpected child, although Excel/WPS both preserve and render
+        // the extension.  Suppress exactly that vendor-extension diagnostic;
+        // other chart extension errors remain visible.
+        errors.RemoveAll(IsBenignWpsShowLeaderLinesExtensionError);
         // Drop known SDK-validator false positives on xlsx <font> child order —
         // see IsBenignFontChildOrderError.
         errors.RemoveAll(IsBenignFontChildOrderError);
@@ -812,6 +818,18 @@ internal static class RawXmlHelper
         var d = e.Description ?? "";
         return d.Contains("'val' attribute is not declared", StringComparison.OrdinalIgnoreCase)
             || d.Contains("text value cannot be empty", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsBenignWpsShowLeaderLinesExtensionError(ValidationError error)
+    {
+        var part = error.Part ?? "";
+        var path = error.Path ?? "";
+        var description = error.Description ?? "";
+        return part.Contains("/charts/chart", StringComparison.OrdinalIgnoreCase)
+            && path.Contains("c:extLst", StringComparison.Ordinal)
+            && path.Contains("c:ext", StringComparison.Ordinal)
+            && description.Contains("http://schemas.microsoft.com/office/drawing/2012/chart:showLeaderLines", StringComparison.Ordinal)
+            && description.Contains("unexpected child element", StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>
