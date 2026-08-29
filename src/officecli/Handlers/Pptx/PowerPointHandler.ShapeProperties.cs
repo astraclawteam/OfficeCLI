@@ -3917,6 +3917,7 @@ public partial class PowerPointHandler
 
         var textBody = shape.TextBody;
         var bp = textBody?.BodyProperties;
+        bool normalAutoFit = false;
         if (bp != null)
         {
             if (bp.LeftInset != null) leftEmu = bp.LeftInset.Value;
@@ -3924,12 +3925,14 @@ public partial class PowerPointHandler
             if (bp.TopInset != null) topEmu = bp.TopInset.Value;
             if (bp.BottomInset != null) bottomEmu = bp.BottomInset.Value;
 
-            // autoFit=normal: PowerPoint shrinks text (fontScale) at render
-            // time to fit the shape — there is no real overflow.
-            // autoFit=shape: the shape resizes to fit the text — also no
-            // overflow. Skip the size-based check in both cases.
-            if (bp.GetFirstChild<Drawing.NormalAutoFit>() != null
-                || bp.GetFirstChild<Drawing.ShapeAutoFit>() != null)
+            // ShapeAutoFit changes the physical box, so the declared bounds
+            // are not authoritative. NormalAutoFit is different: PowerPoint
+            // may shrink text, but WPS can preserve the original size and wrap
+            // a trailing percent sign or unit. Keep evaluating business-token
+            // width under NormalAutoFit, then suppress only the generic height
+            // warning below.
+            normalAutoFit = bp.GetFirstChild<Drawing.NormalAutoFit>() != null;
+            if (bp.GetFirstChild<Drawing.ShapeAutoFit>() != null)
             {
                 return null;
             }
@@ -4038,6 +4041,7 @@ public partial class PowerPointHandler
         // PowerPoint will actually render.
         var textLines = text.Split('\n');
         int totalLines = 0;
+        bool wrappedADeclaredLine = false;
         foreach (var line in textLines)
         {
             if (line.Length == 0)
@@ -4054,6 +4058,7 @@ public partial class PowerPointHandler
                 if (currentLineWidth + charWidth > usableWidth && currentLineWidth > 0)
                 {
                     linesForSegment++;
+                    wrappedADeclaredLine = true;
                     currentLineWidth = charWidth;
                 }
                 else
@@ -4062,6 +4067,41 @@ public partial class PowerPointHandler
                 }
             }
             totalLines += linesForSegment;
+        }
+
+        // PowerPoint and WPS do not apply identical East Asian line-breaking
+        // rules around %, currency symbols and compact KPI strings. A box can
+        // have enough vertical room for an extra line and pass the ordinary
+        // overflow test while WPS leaves the percent sign or unit on a line by
+        // itself. Require authors to make a two-line hierarchy explicit or
+        // provide enough width for the complete metric.
+        bool containsBusinessMetric = System.Text.RegularExpressions.Regex.IsMatch(
+            text,
+            @"(?:\d[\d,.]*\s*%|(?:CNY|RMB|USD|EUR|JPY|¥|￥|\$)\s*\d)",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase
+                | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+        bool hasDetachedBusinessUnit = System.Text.RegularExpressions.Regex.IsMatch(
+            text,
+            @"(?:\d[\d,.]*[ \t]*\r?\n[ \t]*(?:%|万|万元|百万|亿)|(?:CNY|RMB|USD|EUR|JPY|¥|￥|\$)[ \t]*\r?\n[ \t]*\d)",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase
+                | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+        if (hasDetachedBusinessUnit)
+        {
+            return "cross-suite text wrap risk: a numeric value and its percent/currency unit are on separate lines. keep the complete business metric on one line";
+        }
+        // WPS uses wider digit/percent metrics than the generic Latin average
+        // for several common fonts. A conservative 0.65em estimate matches
+        // real WPS export while still allowing the widened 25pt KPI card.
+        bool conservativeMetricWrap = containsBusinessMetric && textLines.Any(line =>
+            line.Sum(ch => ParseHelpers.IsCjkOrFullWidth(ch) ? fontSizePt : fontSizePt * 0.65) > usableWidth);
+        if (containsBusinessMetric && (wrappedADeclaredLine || conservativeMetricWrap))
+        {
+            return $"cross-suite text wrap risk: a percentage, currency or KPI token wraps inside a declared line at {fontSizePt:F1}pt; WPS may detach the unit or percent sign. widen the shape, reduce the font, or insert an intentional line break";
+        }
+
+        if (normalAutoFit)
+        {
+            return null;
         }
 
         double estimatedHeight = totalLines * lineHeight
