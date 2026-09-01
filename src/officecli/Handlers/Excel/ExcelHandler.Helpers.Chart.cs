@@ -824,6 +824,16 @@ public partial class ExcelHandler
         return result;
     }
 
+    private static void PopulateChartDrawingName(DrawingsPart drawingsPart, int chartIndex, DocumentNode node)
+    {
+        var frames = drawingsPart.WorksheetDrawing?.Descendants<XDR.GraphicFrame>()
+            .Where(gf => gf.Descendants<C.ChartReference>().Any() || IsExtendedChartFrame(gf)).ToList();
+        if (frames is null || chartIndex < 1 || chartIndex > frames.Count) return;
+        var name = frames[chartIndex - 1].NonVisualGraphicFrameProperties?
+            .GetFirstChild<XDR.NonVisualDrawingProperties>()?.Name?.Value;
+        if (!string.IsNullOrWhiteSpace(name)) node.Format["name"] = name;
+    }
+
     private string? ResolveRangeNumberFormat(string rangeRef, string defaultSheetName)
     {
         string sheetName = defaultSheetName;

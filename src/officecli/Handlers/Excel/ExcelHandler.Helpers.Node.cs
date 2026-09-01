@@ -1050,6 +1050,8 @@ public partial class ExcelHandler
         node.Format["name"] = tbl.Name?.Value ?? "";
         node.Format["displayName"] = tbl.DisplayName?.Value ?? "";
         node.Format["ref"] = tbl.Reference?.Value ?? "";
+        if (tbl.Comment?.Value is { Length: > 0 } comment)
+            node.Format["comment"] = comment;
 
         var styleInfo = tbl.GetFirstChild<TableStyleInfo>();
         if (styleInfo?.Name?.Value != null)

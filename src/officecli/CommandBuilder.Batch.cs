@@ -81,10 +81,16 @@ static partial class CommandBuilder
             {
                 var output = ExecuteBatchItem(handler, item, json);
                 results.Add(new BatchResult { Index = bi, Success = true, Output = output });
+                OfficeCli.Core.AgentEventStream.Progress(
+                    bi + 1, items.Count, item.Command ?? $"item-{bi + 1}",
+                    $"已完成 {bi + 1}/{items.Count} 个 Office 原生对象操作");
             }
             catch (Exception ex)
             {
                 results.Add(new BatchResult { Index = bi, Success = false, Item = item, Error = ex.Message, Code = OfficeCli.Core.OutputFormatter.InferErrorCode(ex) });
+                OfficeCli.Core.AgentEventStream.Progress(
+                    bi + 1, items.Count, item.Command ?? $"item-{bi + 1}",
+                    $"第 {bi + 1} 个操作失败，正在按批处理策略处理后续动作");
                 if (stopOnError) break;
             }
             // BUG-BT2: per-item unrecognized-LaTeX diagnostics. The handler
@@ -149,6 +155,8 @@ static partial class CommandBuilder
         // old apply-what-succeeds semantics for callers that want partial
         // progress (e.g. lossy replays of dumps with known-unsupported items).
         var batchBestEffortOpt = new Option<bool>("--best-effort") { Description = "Apply the items that succeed even when others fail (pre-atomic legacy semantics). Default: any failure rolls back the whole batch" };
+        var batchEventsOpt = new Option<bool>("--events-jsonl") { Description = "Emit structured Agent progress events as JSONL on stderr" };
+        var batchTaskIdOpt = new Option<string?>("--task-id") { Description = "Stable task identifier used by Agent progress events" };
         var batchCommand = new Command("batch", BatchHelpDescription);
         batchCommand.Add(batchFileArg);
         batchCommand.Add(batchInputOpt);
@@ -156,9 +164,15 @@ static partial class CommandBuilder
         batchCommand.Add(batchForceOpt);
         batchCommand.Add(batchStopOpt);
         batchCommand.Add(batchBestEffortOpt);
+        batchCommand.Add(batchEventsOpt);
+        batchCommand.Add(batchTaskIdOpt);
         batchCommand.Add(jsonOption);
 
-        batchCommand.SetAction(result => { var json = result.GetValue(jsonOption); return SafeRun(() =>
+        batchCommand.SetAction(result =>
+        {
+            var json = result.GetValue(jsonOption);
+            OfficeCli.Core.AgentEventStream.Configure(result.GetValue(batchEventsOpt), result.GetValue(batchTaskIdOpt), "officecli-batch");
+            return SafeRun(() =>
         {
             var file = result.GetValue(batchFileArg)!;
             var inputFile = result.GetValue(batchInputOpt);
@@ -358,6 +372,11 @@ static partial class CommandBuilder
                 }
                 return 0;
             }
+
+            OfficeCli.Core.AgentEventStream.TaskStarted("已接收 OfficeCLI batch，开始执行真实文档操作", "batch_execution");
+            OfficeCli.Core.AgentEventStream.StartStage(
+                "batch_execution", "Office 原生对象批处理", file.Name,
+                $"正在处理 {items.Count} 个文档操作", "artifact_validation", items.Count);
 
             // BUG-FUZZER-R6-03: batch must honour the same .docx document
             // protection check that `set` enforces. Without this, a protected
@@ -646,9 +665,17 @@ static partial class CommandBuilder
             // (watch notify happened inside the handler scope above)
             // Exit precedence: a failed item (exit 1) outranks an
             // unrecognized-LaTeX-only warning (exit 2 mirrors single-shot).
-            if (!batchSuccess) return 1;
+            if (!batchSuccess)
+            {
+                OfficeCli.Core.AgentEventStream.TaskFailed($"批处理失败，{batchResults.Count(r => !r.Success)} 个操作未成功；原子模式未提交半成品");
+                return 1;
+            }
+            OfficeCli.Core.AgentEventStream.StageCompleted($"{items.Count} 个文档操作执行完成", "cp-officecli-batch");
+            OfficeCli.Core.AgentEventStream.ArtifactReady(file.Name, "文档已保存并完成批处理回读", "cp-officecli-batch");
+            OfficeCli.Core.AgentEventStream.TaskCompleted("OfficeCLI batch 已完成");
             return batchWarnings.Count > 0 ? 2 : 0;
-        }, json); });
+        }, json);
+        });
 
         return batchCommand;
     }

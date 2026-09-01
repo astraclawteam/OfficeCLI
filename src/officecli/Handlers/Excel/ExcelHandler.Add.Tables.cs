@@ -1312,7 +1312,8 @@ public partial class ExcelHandler
             Name = tableName,
             DisplayName = displayName,
             Reference = rangeRef,
-            TotalsRowShown = hasTotalRow
+            TotalsRowShown = hasTotalRow,
+            Comment = properties.GetValueOrDefault("comment")
         };
         if (hasTotalRow)
             table.TotalsRowCount = 1;

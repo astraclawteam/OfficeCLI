@@ -699,6 +699,7 @@ public partial class ExcelHandler
 
             var chartInfo = allCharts[chartIdx - 1];
             var chartNode = new DocumentNode { Path = $"/{sheetNameFromPath}/chart[{chartIdx}]", Type = "chart" };
+            PopulateChartDrawingName(drawingsPart, chartIdx, chartNode);
 
             // BUG-R11-04: chart Get used to skip the TwoCellAnchor even though
             // `add chart --prop anchor=B2:F7` and `set ... anchor=...` both
@@ -1315,6 +1316,7 @@ public partial class ExcelHandler
                 {
                     var chartInfo = allCharts[i];
                     var node = new DocumentNode { Path = $"/{sheetName}/chart[{i + 1}]", Type = "chart" };
+                    PopulateChartDrawingName(drawingsPart, i + 1, node);
 
                     if (chartInfo.IsExtended)
                     {

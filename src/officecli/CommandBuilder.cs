@@ -195,6 +195,9 @@ static partial class CommandBuilder
         rootCommand.Add(BuildBrandExtractCommand(jsonOption));
         rootCommand.Add(BuildDiagramCommand(jsonOption));
         rootCommand.Add(BuildDiagramRefreshCommand(jsonOption));
+        rootCommand.Add(BuildComponentCommand(jsonOption));
+        rootCommand.Add(BuildChartSpecCommand(jsonOption));
+        rootCommand.Add(BuildComposeCommand(jsonOption));
         rootCommand.Add(BuildSmartArtCommand(jsonOption));
         rootCommand.Add(BuildFidelitySnapshotCommand(jsonOption));
         rootCommand.Add(BuildFidelityDiffCommand(jsonOption));
@@ -671,6 +674,7 @@ static partial class CommandBuilder
             }
             catch (Exception ex)
             {
+                OfficeCli.Core.AgentEventStream.TaskFailed(ex.Message);
                 WriteError(ex, json);
                 return 1;
             }
@@ -692,6 +696,7 @@ static partial class CommandBuilder
         }
         catch (Exception ex)
         {
+            OfficeCli.Core.AgentEventStream.TaskFailed(ex.Message);
             WriteError(ex, json);
             var stderr = stderrWriter.ToString().TrimEnd('\r', '\n');
             OfficeCli.Core.CliLogger.LogError(stderr);

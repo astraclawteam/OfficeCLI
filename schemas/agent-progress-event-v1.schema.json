@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://officecli.ai/schemas/agent-progress-event-v1.schema.json",
+  "title": "Office Agent Progress Event v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["protocolVersion", "event", "taskId", "operation", "status", "elapsedSeconds", "needsUserReview", "sequence", "timestamp"],
+  "properties": {
+    "protocolVersion": {"const": 1},
+    "event": {"enum": ["task.started", "stage.started", "stage.progress", "stage.completed", "artifact.ready", "review.required", "warning.detected", "retry.started", "checkpoint.saved", "task.validating", "task.completed", "task.failed", "task.resumed"]},
+    "taskId": {"type": "string", "minLength": 1, "maxLength": 200},
+    "operation": {"type": "string", "minLength": 1, "maxLength": 80},
+    "stageId": {"type": "string", "pattern": "^[a-z][a-z0-9._-]{0,79}$"},
+    "stageName": {"type": "string", "minLength": 1, "maxLength": 120},
+    "status": {"enum": ["running", "completed", "ready", "saved", "paused", "warning", "failed"]},
+    "completedItems": {"type": "integer", "minimum": 0},
+    "totalItems": {"type": "integer", "minimum": 0},
+    "currentArtifact": {"type": "string", "minLength": 1, "maxLength": 1000},
+    "summary": {"type": "string", "minLength": 1, "maxLength": 4000},
+    "checkpointId": {"type": "string", "minLength": 1, "maxLength": 200},
+    "elapsedSeconds": {"type": "number", "minimum": 0},
+    "nextStage": {"type": "string", "minLength": 1, "maxLength": 80},
+    "needsUserReview": {"type": "boolean"},
+    "riskCodes": {"type": "array", "uniqueItems": true, "maxItems": 64, "items": {"type": "string", "minLength": 1, "maxLength": 80}},
+    "sequence": {"type": "integer", "minimum": 1},
+    "timestamp": {"type": "string", "format": "date-time"}
+  }
+}
