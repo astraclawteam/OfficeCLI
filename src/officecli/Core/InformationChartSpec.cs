@@ -113,8 +113,10 @@ public static class InformationChartEngine
             ["data"] = string.Join(';', series.Select(item => $"{EscapeList(item.Name)}:{string.Join(',', item.Values.Select(FormatNumber))}")),
             ["chartStyle"] = "10",
             ["legend"] = series.Count > 1 ? "bottom" : "none",
-            ["gridlines"] = "D9E2F3:0.75:solid",
+            ["legend.font"] = "10:#526074",
+            ["gridlines"] = "false",
             ["dataLabels"] = spec.Items.Count <= 12 ? "value" : "none",
+            ["datalabels.numfmt"] = string.IsNullOrWhiteSpace(spec.Unit) ? "0.0" : UnitFormat(spec.Unit),
             ["colors"] = string.Join(',', ChartColors(spec, series.Count)),
             ["width"] = Path.GetExtension(filePath).Equals(".pptx", StringComparison.OrdinalIgnoreCase) ? "30cm" : "16cm",
             ["height"] = Path.GetExtension(filePath).Equals(".pptx", StringComparison.OrdinalIgnoreCase) ? "12cm" : "9cm",
@@ -128,9 +130,39 @@ public static class InformationChartEngine
         if (spec.ChartType == "supply-demand-gap") props["combotypes"] = "column,line";
         if (spec.ChartType == "probability-impact-scatter") props["scatterStyle"] = "marker";
         var path = handler.Add(target, "chart", null, props);
+        if (Path.GetExtension(filePath).Equals(".pptx", StringComparison.OrdinalIgnoreCase) && spec.Annotations.Count > 0)
+            AddPowerPointAnnotations(handler, target, spec);
         handler.Save();
         return new InformationChartReceipt(true, filePath, spec.ChartId, spec.ChartType, "native-chart", path,
             spec.Title, spec.Items.Count, null, spec.FactRefs, spec.ClaimRefs);
+    }
+
+    private static void AddPowerPointAnnotations(IDocumentHandler handler, string target, InformationChartSpec spec)
+    {
+        var x = Centimeters(spec.ThemeTokens.GetValueOrDefault("placement.x"), 1.2);
+        var y = Centimeters(spec.ThemeTokens.GetValueOrDefault("placement.y"), 2.5);
+        var width = Centimeters(spec.ThemeTokens.GetValueOrDefault("placement.width"), 30.0);
+        var accent = spec.ThemeTokens.GetValueOrDefault("accent", "0E7490").TrimStart('#');
+        for (var index = 0; index < Math.Min(3, spec.Annotations.Count); index++)
+        {
+            var annotation = spec.Annotations[index];
+            handler.Add(target, "textbox", null, new Dictionary<string, string>
+            {
+                ["name"] = $"officecli-chart-annotation-{spec.ChartId}-{index + 1}",
+                ["text"] = string.IsNullOrWhiteSpace(annotation.ItemLabel) ? annotation.Text : $"{annotation.ItemLabel} · {annotation.Text}",
+                ["x"] = $"{Math.Max(x + 0.5, x + width - 7.0):0.0}cm", ["y"] = $"{y + 0.8 + index * 1.25:0.0}cm",
+                ["width"] = "6.5cm", ["height"] = "0.95cm", ["font.size"] = "10", ["font.bold"] = "true",
+                ["font.color"] = accent, ["fill"] = "FFFFFF", ["fill.transparency"] = "8", ["line"] = $"{accent}:1",
+            });
+        }
+    }
+
+    private static double Centimeters(string? value, double fallback)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return fallback;
+        var normalized = value.Trim();
+        if (normalized.EndsWith("cm", StringComparison.OrdinalIgnoreCase)) normalized = normalized[..^2];
+        return double.TryParse(normalized, NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed) ? parsed : fallback;
     }
 
     public static IReadOnlyList<InformationChartReadItem> Read(IDocumentHandler handler)

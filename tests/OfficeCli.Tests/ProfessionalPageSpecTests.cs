@@ -55,6 +55,36 @@ public class ProfessionalPageSpecTests
         using (var package = WordprocessingDocument.Open(files["docx"], false)) Assert.Empty(validator.Validate(package));
         using (var package = SpreadsheetDocument.Open(files["xlsx"], false)) Assert.Empty(validator.Validate(package));
         using (var package = PresentationDocument.Open(files["pptx"], false)) Assert.Empty(validator.Validate(package));
+        using (var handler = DocumentHandlerFactory.Open(files["pptx"], editable: false))
+        {
+            var slide = handler.Get("/slide[1]", 2);
+            var title = slide.Children.Single(item => item.Format.GetValueOrDefault("name")?.ToString() == "pagespec-title-decision");
+            Assert.Equal("34pt", title.Format["size"]?.ToString());
+            var narrative = slide.Children.Single(item => item.Format.GetValueOrDefault("name")?.ToString() == "pagespec-block-context");
+            Assert.Equal("none", narrative.Format["fill"]?.ToString());
+            Assert.Contains(slide.Children, item => item.Text == "Next action · Approve capacity");
+            var chart = slide.Children.Single(item => item.Type == "chart");
+            Assert.Equal("false", chart.Format["gridlines"]?.ToString());
+            Assert.True(ParseLengthInPoints(chart.Format["width"]) > ParseLengthInPoints(narrative.Format["width"]));
+        }
+    }
+
+    private static double ParseLengthInPoints(object? value)
+    {
+        var text = (value?.ToString() ?? "0").Trim();
+        var factor = 1.0;
+        if (text.EndsWith("cm", StringComparison.OrdinalIgnoreCase))
+        {
+            text = text[..^2];
+            factor = 72.0 / 2.54;
+        }
+        else if (text.EndsWith("in", StringComparison.OrdinalIgnoreCase))
+        {
+            text = text[..^2];
+            factor = 72.0;
+        }
+        else if (text.EndsWith("pt", StringComparison.OrdinalIgnoreCase)) text = text[..^2];
+        return double.Parse(text, System.Globalization.CultureInfo.InvariantCulture) * factor;
     }
 
     private static ProfessionalPageSpec Spec(string format) => new()

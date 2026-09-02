@@ -72,11 +72,25 @@ public class InformationChartSpecTests
                 Assert.Equal("annotated-trend", chart.RequestedChartType);
                 Assert.Equal(new[] { "revenue-jun", "revenue-jul" }, chart.FactRefs);
                 Assert.Equal(new[] { "growth-accelerated" }, chart.ClaimRefs);
+                Assert.Equal("false", chart.NativeObject.Format["gridlines"]?.ToString());
             }
+            Assert.True(PackageChartXmlContains(path, "1F4E78"), $"primary chart color did not persist in {Path.GetExtension(path)}");
         }
         var validator = new OpenXmlValidator(FileFormatVersions.Microsoft365);
         using (var package = WordprocessingDocument.Open(docx, false)) Assert.Empty(validator.Validate(package));
         using (var package = SpreadsheetDocument.Open(xlsx, false)) Assert.Empty(validator.Validate(package));
         using (var package = PresentationDocument.Open(pptx, false)) Assert.Empty(validator.Validate(package));
+    }
+
+    private static bool PackageChartXmlContains(string path, string expected)
+    {
+        using var archive = System.IO.Compression.ZipFile.OpenRead(path);
+        foreach (var entry in archive.Entries.Where(item => item.FullName.Contains("/charts/", StringComparison.OrdinalIgnoreCase)
+            && item.FullName.EndsWith(".xml", StringComparison.OrdinalIgnoreCase)))
+        {
+            using var reader = new StreamReader(entry.Open());
+            if (reader.ReadToEnd().Contains(expected, StringComparison.OrdinalIgnoreCase)) return true;
+        }
+        return false;
     }
 }

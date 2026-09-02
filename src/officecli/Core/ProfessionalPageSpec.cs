@@ -113,7 +113,7 @@ public static class ProfessionalPageCompiler
             blocks.Add(Receipt(new ProfessionalPageBlock { BlockId = page.PageId + "-claim", Kind = "narrative", ClaimRefs = page.Blocks.SelectMany(x => x.ClaimRefs).Distinct().ToList() }, heading));
             foreach (var block in page.Blocks)
                 blocks.Add(CompileBlock(handler, filePath, spec, page, block, "/body", "docx"));
-            handler.Add("/body", "paragraph", null, new() { ["text"] = $"Next action: {page.ReaderAction}", ["style"] = "Quote" });
+            handler.Add("/body", "paragraph", null, new() { ["text"] = $"{Label(spec, "下一步", "Next action")}: {page.ReaderAction}", ["style"] = "Quote" });
             result.Add(new ProfessionalPageReceipt(page.PageId, page.PageRole, "/body", blocks));
         }
         return result;
@@ -143,7 +143,7 @@ public static class ProfessionalPageCompiler
                 blocks.Add(CompileBlock(handler, filePath, spec, page, block, target, "xlsx"));
                 currentRow += block.Kind is "component" or "chart" ? Math.Max(5, block.Component?.Items.Count + 3 ?? block.Chart?.Items.Count + 3 ?? 5) : 2;
             }
-            handler.Set($"{sheet}/A{currentRow}", new() { ["value"] = $"Decision/action: {page.ReaderAction}", ["font.bold"] = "true" });
+            handler.Set($"{sheet}/A{currentRow}", new() { ["value"] = $"{Label(spec, "决策与行动", "Decision and action")}: {page.ReaderAction}", ["font.bold"] = "true" });
             currentRow += 3;
             result.Add(new ProfessionalPageReceipt(page.PageId, page.PageRole, sheet, blocks));
         }
@@ -168,21 +168,17 @@ public static class ProfessionalPageCompiler
             {
                 ["name"] = "pagespec-title-" + page.PageId, ["text"] = page.PrimaryClaim,
                 ["x"] = "1.2cm", ["y"] = "0.7cm", ["width"] = "31cm", ["height"] = "1.4cm",
-                ["font.size"] = "24", ["font.bold"] = "true", ["font.color"] = spec.BrandTokens.GetValueOrDefault("text", "172033"),
+                ["font.size"] = page.PageRole.Equals("cover", StringComparison.OrdinalIgnoreCase) ? "40" : "34",
+                ["font.bold"] = "true", ["font.color"] = spec.BrandTokens.GetValueOrDefault("text", "172033"),
             });
             blocks.Add(Receipt(new ProfessionalPageBlock { BlockId = page.PageId + "-claim", Kind = "narrative", ClaimRefs = page.Blocks.SelectMany(x => x.ClaimRefs).Distinct().ToList() }, title));
-            var count = page.Blocks.Count;
-            for (var blockIndex = 0; blockIndex < count; blockIndex++)
+            var layouts = BuildPowerPointLayouts(page);
+            for (var blockIndex = 0; blockIndex < page.Blocks.Count; blockIndex++)
             {
                 var block = page.Blocks[blockIndex];
                 var target = slide;
-                var columns = count <= 2 ? count : 2;
-                var column = blockIndex % columns;
-                var row = blockIndex / columns;
-                var width = columns == 1 ? 31.0 : 15.1;
-                var height = count <= 2 ? 10.2 : 5.0;
-                var x = 1.2 + column * 15.9;
-                var y = 2.5 + row * 5.45;
+                var layout = layouts[blockIndex];
+                var (x, y, width, height) = (layout.X, layout.Y, layout.Width, layout.Height);
                 if (block.Component is not null) block.Component.Target = target;
                 if (block.Chart is not null) block.Chart.Target = target;
                 if (block.Component is not null)
@@ -206,15 +202,72 @@ public static class ProfessionalPageCompiler
                         ["name"] = "pagespec-block-" + block.BlockId,
                         ["text"] = string.IsNullOrWhiteSpace(block.Title) ? block.Text! : $"{block.Title}\n{block.Text}",
                         ["x"] = $"{x:0.0}cm", ["y"] = $"{y:0.0}cm", ["width"] = $"{width:0.0}cm", ["height"] = $"{height:0.0}cm",
-                        ["font.size"] = page.Density == "compact" ? "12" : "15", ["fill"] = "FFFFFF", ["line"] = "D9E2F3:1",
+                        ["font.size"] = block.Importance.Equals("primary", StringComparison.OrdinalIgnoreCase) ? "20" : page.Density == "compact" ? "12" : "15",
+                        ["font.bold"] = block.Importance.Equals("primary", StringComparison.OrdinalIgnoreCase) ? "true" : "false",
+                        ["font.color"] = spec.BrandTokens.GetValueOrDefault("text", "334155"), ["fill"] = "none", ["line"] = "none",
                     });
                     blocks.Add(Receipt(block, target));
                 }
                 else blocks.Add(CompileBlock(handler, filePath, spec, page, block, target, "pptx"));
             }
+            handler.Add(slide, "textbox", null, new()
+            {
+                ["name"] = "pagespec-action-" + page.PageId,
+                ["text"] = $"{Label(spec, "下一步", "Next action")} · {page.ReaderAction}",
+                ["x"] = "1.2cm", ["y"] = "17.25cm", ["width"] = "31cm", ["height"] = "0.85cm",
+                ["font.size"] = "12", ["font.bold"] = "true", ["font.color"] = spec.BrandTokens.GetValueOrDefault("primary", "1F4E78"),
+                ["fill"] = "none", ["line"] = "none",
+            });
             result.Add(new ProfessionalPageReceipt(page.PageId, page.PageRole, slide, blocks));
         }
         return result;
+    }
+
+    private sealed record PowerPointBlockLayout(double X, double Y, double Width, double Height);
+
+    private static PowerPointBlockLayout[] BuildPowerPointLayouts(ProfessionalPage page)
+    {
+        const double x = 1.2, y = 2.55, width = 31.0, height = 14.05, gap = 0.65;
+        var count = page.Blocks.Count;
+        var result = new PowerPointBlockLayout[count];
+        var primary = page.Blocks.FindIndex(block => block.Importance.Equals("primary", StringComparison.OrdinalIgnoreCase));
+        if (primary < 0) primary = page.Blocks.FindIndex(block => block.Kind is "chart" or "component");
+        if (primary < 0) primary = 0;
+        if (count == 1)
+        {
+            result[0] = new(x, y, width, height);
+            return result;
+        }
+        var supporting = Enumerable.Range(0, count).Where(index => index != primary).ToArray();
+        if (count == 2)
+        {
+            result[primary] = new(x, y, 20.15, height);
+            result[supporting[0]] = new(x + 20.15 + gap, y + 0.55, width - 20.15 - gap, height - 1.1);
+            return result;
+        }
+        var decisionLed = page.PageRole.Equals("decision", StringComparison.OrdinalIgnoreCase)
+            || page.PageRole.Equals("action", StringComparison.OrdinalIgnoreCase);
+        if (count <= 4 && decisionLed)
+        {
+            const double primaryHeight = 8.25;
+            result[primary] = new(x, y, width, primaryHeight);
+            var supportWidth = (width - gap * (supporting.Length - 1)) / supporting.Length;
+            for (var index = 0; index < supporting.Length; index++)
+                result[supporting[index]] = new(x + index * (supportWidth + gap), y + primaryHeight + gap, supportWidth, height - primaryHeight - gap);
+            return result;
+        }
+        const double primaryWidth = 20.1;
+        result[primary] = new(x, y, primaryWidth, height);
+        var supportHeight = (height - gap * (supporting.Length - 1)) / supporting.Length;
+        for (var index = 0; index < supporting.Length; index++)
+            result[supporting[index]] = new(x + primaryWidth + gap, y + index * (supportHeight + gap), width - primaryWidth - gap, supportHeight);
+        return result;
+    }
+
+    private static string Label(ProfessionalPageSpec spec, string chinese, string english)
+    {
+        var text = spec.Title + string.Concat(spec.Pages.Select(page => page.PrimaryClaim + page.ReaderAction));
+        return text.Any(character => character is >= '\u3400' and <= '\u9FFF') ? chinese : english;
     }
 
     private static ProfessionalPageBlockReceipt CompileBlock(IDocumentHandler handler, string filePath, ProfessionalPageSpec document,
