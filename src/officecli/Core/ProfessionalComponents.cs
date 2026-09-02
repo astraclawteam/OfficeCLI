@@ -178,7 +178,7 @@ public static class ProfessionalComponentCatalog
             if (!string.IsNullOrWhiteSpace(instanceId) && !string.Equals(instanceId, data["instance"], StringComparison.Ordinal)) continue;
             receipts.Add(new ProfessionalComponentReceipt(true, "read", filePath, extension,
                 data["component"], data["instance"], node.Path, data.GetValueOrDefault("variant", "adaptive"),
-                data.GetValueOrDefault("density", "balanced"), node.Children.Count,
+                data.GetValueOrDefault("density", "balanced"), ReadItemCount(node, data),
                 SplitRefs(data.GetValueOrDefault("facts", "")), SplitRefs(data.GetValueOrDefault("claims", "")),
                 SplitRefs(data.GetValueOrDefault("decisions", "")), SplitRefs(data.GetValueOrDefault("actions", ""))));
         }
@@ -239,8 +239,9 @@ public static class ProfessionalComponentCatalog
             .Where(field => definition.RequiredSlots.Contains(field, StringComparer.OrdinalIgnoreCase)
                 || spec.Items.Any(item => item.Fields.ContainsKey(field)))
             .ToList();
-        var rows = new List<List<string>> { new() { "Item" } };
-        rows[0].AddRange(fields.Select(ToHeader));
+        var chinese = UsesChinese(spec);
+        var rows = new List<List<string>> { new() { chinese ? "事项" : "Item" } };
+        rows[0].AddRange(fields.Select(field => ToHeader(field, chinese)));
         foreach (var item in OrderItems(spec.ComponentId, spec.Items))
         {
             var row = new List<string> { item.Label };
@@ -286,12 +287,14 @@ public static class ProfessionalComponentCatalog
             }
             else
             {
+                var totalWidth = Centimeters(spec.ThemeTokens.GetValueOrDefault("placement.width"), 31.4);
                 props["name"] = marker;
                 props["x"] = spec.ThemeTokens.GetValueOrDefault("placement.x", "1.2cm");
                 props["y"] = spec.ThemeTokens.GetValueOrDefault("placement.y", "2.5cm");
                 props["width"] = spec.ThemeTokens.GetValueOrDefault("placement.width", "31.4cm");
                 props["height"] = spec.ThemeTokens.GetValueOrDefault("placement.height",
                     spec.Density switch { "compact" => "9cm", "spacious" => "13.5cm", _ => "11.2cm" });
+                props["colWidths"] = string.Join(',', PowerPointColumnWidths(rows, totalWidth).Select(value => $"{value:0.00}cm"));
                 props["headerFill"] = primary;
                 props["bodyFill"] = "F7F9FC";
                 props["firstRow"] = "true";
@@ -342,6 +345,7 @@ public static class ProfessionalComponentCatalog
             ["component"] = spec.ComponentId,
             ["density"] = spec.Density,
             ["variant"] = SelectVariant(spec, 1),
+            ["items"] = spec.Items.Count.ToString(CultureInfo.InvariantCulture),
             ["facts"] = string.Join(',', spec.FactRefs),
             ["claims"] = string.Join(',', spec.ClaimRefs),
             ["decisions"] = string.Join(',', spec.DecisionRefs),
@@ -413,6 +417,21 @@ public static class ProfessionalComponentCatalog
         var last = target.Split('/').Last();
         return System.Text.RegularExpressions.Regex.IsMatch(last, "^[A-Za-z]{1,3}[1-9][0-9]*$") ? last.ToUpperInvariant() : "A1";
     }
+    private static double Centimeters(string? value, double fallback)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return fallback;
+        var normalized = value.Trim();
+        if (normalized.EndsWith("cm", StringComparison.OrdinalIgnoreCase)) normalized = normalized[..^2];
+        return double.TryParse(normalized, NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed) ? parsed : fallback;
+    }
+    private static IReadOnlyList<double> PowerPointColumnWidths(IReadOnlyList<List<string>> rows, double totalWidth)
+    {
+        var columns = rows.Max(row => row.Count);
+        var weights = Enumerable.Range(0, columns).Select(column =>
+            Math.Max(4.0, rows.Max(row => column < row.Count ? Math.Min(28, row[column].Length) : 0))).ToArray();
+        var weightTotal = weights.Sum();
+        return weights.Select(weight => totalWidth * weight / weightTotal).ToArray();
+    }
     private static int ExcelRow(string cell) => int.Parse(new string(cell.Where(char.IsDigit).ToArray()), CultureInfo.InvariantCulture);
     private static int ExcelColumnNumber(string cell)
     {
@@ -457,7 +476,41 @@ public static class ProfessionalComponentCatalog
     };
     private static string QuoteCell(string value) => value.IndexOfAny([',', ';', '"', '\n', '\r']) >= 0
         ? $"\"{value.Replace("\"", "\"\"")}\"" : value;
-    private static string ToHeader(string value) => string.Concat(value.Select((c, i) => char.IsUpper(c) && i > 0 ? " " + c : c.ToString()));
+    private static int ReadItemCount(DocumentNode node, IReadOnlyDictionary<string, string> marker)
+    {
+        if (int.TryParse(marker.GetValueOrDefault("items"), NumberStyles.Integer, CultureInfo.InvariantCulture, out var marked))
+            return Math.Max(0, marked);
+        if (node.Format.TryGetValue("rows", out var rows)
+            && int.TryParse(rows?.ToString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var rowCount))
+            return Math.Max(0, rowCount - 1);
+        var nativeRows = node.ChildCount > 0 ? node.ChildCount : node.Children.Count;
+        return Math.Max(0, nativeRows - 1);
+    }
+
+    private static bool UsesChinese(ProfessionalComponentSpec spec)
+    {
+        var text = spec.Title + string.Concat(spec.Items.Select(item => item.Label
+            + string.Concat(item.Fields.Values.Where(value => value.ValueKind == JsonValueKind.String).Select(value => value.GetString()))));
+        return text.Any(character => character is >= '\u3400' and <= '\u9FFF');
+    }
+
+    private static string ToHeader(string value, bool chinese)
+    {
+        if (!chinese) return string.Concat(value.Select((c, i) => char.IsUpper(c) && i > 0 ? " " + c : c.ToString()));
+        return value.ToLowerInvariant() switch
+        {
+            "value" => "数值", "delta" => "变化", "status" => "状态", "note" => "说明", "actual" => "实际",
+            "target" => "目标", "forecast" => "预测", "gap" => "差距", "unit" => "单位", "contribution" => "贡献",
+            "start" => "起点", "end" => "终点", "capacity" => "产能", "demand" => "需求", "period" => "周期",
+            "threshold" => "阈值", "benefit" => "收益", "cost" => "成本", "risk" => "风险", "constraint" => "约束",
+            "score" => "评分", "recommendation" => "建议", "probability" => "概率", "impact" => "影响", "owner" => "负责人",
+            "mitigation" => "缓解措施", "request" => "决策请求", "deadline" => "截止时间", "conditions" => "条件",
+            "consequence" => "后果", "amount" => "金额", "timing" => "发生时间", "affectedparty" => "受影响方",
+            "date" => "日期", "acceptance" => "验收标准", "dependency" => "依赖", "timeframe" => "时间",
+            "standard" => "验收标准", "contributors" => "协作方", "escalation" => "升级规则", "from" => "前置事项",
+            "to" => "后续事项", "condition" => "触发条件", "evidence" => "证据", "action" => "行动", _ => value,
+        };
+    }
     private static IReadOnlyList<string> SplitRefs(string value) => value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
     private static void EnsureUnique(List<string> values, string field)
     {

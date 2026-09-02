@@ -14,6 +14,7 @@ public sealed class InformationChartSpec
     [JsonPropertyName("chartType")] public string ChartType { get; set; } = "";
     [JsonPropertyName("title")] public string Title { get; set; } = "";
     [JsonPropertyName("unit")] public string? Unit { get; set; }
+    [JsonPropertyName("percentageInput")] public string PercentageInput { get; set; } = "auto";
     [JsonPropertyName("target")] public string? Target { get; set; }
     [JsonPropertyName("items")] public List<InformationChartItem> Items { get; set; } = [];
     [JsonPropertyName("annotations")] public List<InformationChartAnnotation> Annotations { get; set; } = [];
@@ -55,8 +56,11 @@ public sealed record InformationChartReceipt(bool Ok, string File, string ChartI
     IReadOnlyList<string> FactRefs, IReadOnlyList<string> ClaimRefs);
 
 public sealed record InformationChartListResponse(bool Ok, int Count, IReadOnlyList<InformationChartDefinition> Charts);
+public sealed record InformationChartNativeObject(string Path, string Type, string? Text, string? Preview,
+    int ChildCount, IReadOnlyDictionary<string, string?> Format);
 public sealed record InformationChartReadItem(string ChartId, string RequestedChartType, string NativeObjectPath,
-    string Title, string? Unit, IReadOnlyList<string> FactRefs, IReadOnlyList<string> ClaimRefs, DocumentNode NativeObject);
+    string Title, string? Unit, int ItemCount, IReadOnlyList<string> FactRefs, IReadOnlyList<string> ClaimRefs,
+    InformationChartNativeObject NativeObject);
 public sealed record InformationChartReadResponse(bool Ok, int Count, IReadOnlyList<InformationChartReadItem> Charts);
 
 public static class InformationChartEngine
@@ -90,8 +94,11 @@ public static class InformationChartEngine
             throw new CliException("ChartSpec requires factRefs and claimRefs so the conclusion remains traceable.") { Code = "chart_binding_missing" };
         if (spec.AxisPolicy is not ("auto" or "zero" or "nonzero"))
             throw new CliException("ChartSpec axisPolicy must be auto, zero or nonzero.") { Code = "chart_spec_invalid" };
+        if (spec.PercentageInput is not ("auto" or "fraction" or "points"))
+            throw new CliException("ChartSpec percentageInput must be auto, fraction or points.") { Code = "chart_spec_invalid" };
         if (spec.AxisPolicy == "nonzero" && string.IsNullOrWhiteSpace(spec.AxisReason))
             throw new CliException("A nonzero axis requires axisReason.") { Code = "chart_axis_reason_missing" };
+        _ = ResolvePercentageScale(spec);
         return spec;
     }
 
@@ -109,6 +116,7 @@ public static class InformationChartEngine
         {
             ["chartType"] = definition.NativeChartType,
             ["title"] = spec.Title,
+            ["title.lang"] = UsesChinese(spec) ? "zh-CN" : "en-US",
             ["categories"] = string.Join(',', spec.Items.Select(item => EscapeList(item.Label))),
             ["data"] = string.Join(';', series.Select(item => $"{EscapeList(item.Name)}:{string.Join(',', item.Values.Select(FormatNumber))}")),
             ["chartStyle"] = "10",
@@ -175,8 +183,8 @@ public static class InformationChartEngine
             result.Add(new InformationChartReadItem(
                 values["id"], values["type"], node.Path,
                 node.Format.GetValueOrDefault("title")?.ToString() ?? "",
-                values.GetValueOrDefault("unit"), SplitRefs(values.GetValueOrDefault("facts", "")),
-                SplitRefs(values.GetValueOrDefault("claims", "")), node));
+                values.GetValueOrDefault("unit"), ParseItemCount(values), SplitRefs(values.GetValueOrDefault("facts", "")),
+                SplitRefs(values.GetValueOrDefault("claims", "")), ToReadObject(node)));
         }
         return result;
     }
@@ -206,6 +214,7 @@ public static class InformationChartEngine
         if (Path.GetExtension(filePath).Equals(".pptx", StringComparison.OrdinalIgnoreCase))
         {
             props["name"] = "officecli-chart-fallback-" + spec.ChartId;
+            props["colWidths"] = string.Join(',', PowerPointColumnWidths(rows, 31.0).Select(value => $"{value:0.00}cm"));
             props["x"] = "1.2cm"; props["y"] = "2.5cm"; props["width"] = "31cm"; props["height"] = "11cm";
         }
         if (Path.GetExtension(filePath).Equals(".docx", StringComparison.OrdinalIgnoreCase)) props["caption"] = "officecli-chart-fallback-" + spec.ChartId;
@@ -244,7 +253,9 @@ public static class InformationChartEngine
             "probability-impact-scatter" => ["impact", "probability"],
             _ => ["value"],
         };
-        return keys.Select(key => (ToHeader(key), spec.Items.Select(item => Read(item, key) ?? 0).ToList())).ToList();
+        var percentageDivisor = ResolvePercentageScale(spec) == "points" ? 100d : 1d;
+        var chinese = UsesChinese(spec);
+        return keys.Select(key => (ToHeader(key, chinese), spec.Items.Select(item => (Read(item, key) ?? 0) / percentageDivisor).ToList())).ToList();
     }
 
     private static double? Read(InformationChartItem item, string key) => key switch
@@ -267,6 +278,7 @@ public static class InformationChartEngine
         var marker = "officecli-chart|" + string.Join('|', new Dictionary<string, string>
         {
             ["id"] = spec.ChartId, ["type"] = spec.ChartType, ["unit"] = spec.Unit ?? "",
+            ["items"] = spec.Items.Count.ToString(CultureInfo.InvariantCulture),
             ["facts"] = string.Join(',', spec.FactRefs), ["claims"] = string.Join(',', spec.ClaimRefs),
         }.Select(pair => $"{pair.Key}={Uri.EscapeDataString(pair.Value)}"));
         if (marker.Length > 240)
@@ -289,7 +301,53 @@ public static class InformationChartEngine
     private static string FormatNumber(double value) => value.ToString("0.###############", CultureInfo.InvariantCulture);
     private static string EscapeList(string value) => value.Replace(",", " ").Replace(";", " ");
     private static string QuoteCell(string value) => value.IndexOfAny([',', ';', '"', '\n', '\r']) >= 0 ? $"\"{value.Replace("\"", "\"\"")}\"" : value;
-    private static string ToHeader(string value) => char.ToUpperInvariant(value[0]) + value[1..];
+    private static IReadOnlyList<double> PowerPointColumnWidths(IReadOnlyList<List<string>> rows, double totalWidth)
+    {
+        var columns = rows.Max(row => row.Count);
+        var weights = Enumerable.Range(0, columns).Select(column =>
+            Math.Max(4.0, rows.Max(row => column < row.Count ? Math.Min(24, row[column].Length) : 0))).ToArray();
+        var weightTotal = weights.Sum();
+        return weights.Select(weight => totalWidth * weight / weightTotal).ToArray();
+    }
+    private static string ResolvePercentageScale(InformationChartSpec spec)
+    {
+        if (string.IsNullOrWhiteSpace(spec.Unit)
+            || !(spec.Unit.Contains('%') || spec.Unit.Contains("percent", StringComparison.OrdinalIgnoreCase))) return "none";
+        if (spec.PercentageInput is "fraction" or "points") return spec.PercentageInput;
+        var values = spec.Items.SelectMany(item => new[]
+            { item.Actual, item.Target, item.Forecast, item.Value, item.Contribution, item.Capacity, item.Demand, item.Low, item.High, item.Probability, item.Impact }
+            .Where(value => value.HasValue).Select(value => value!.Value).Concat(item.Fields.Values)).ToList();
+        var hasFraction = values.Any(value => Math.Abs(value) > 0 && Math.Abs(value) <= 1);
+        var hasPoints = values.Any(value => Math.Abs(value) > 1);
+        if (hasFraction && hasPoints)
+            throw new CliException("Percentage data mixes fractions (0.82) and percentage points (82). Set percentageInput explicitly or normalize the values.")
+            { Code = "chart_percentage_scale_ambiguous" };
+        return hasPoints ? "points" : "fraction";
+    }
+
+    private static int ParseItemCount(IReadOnlyDictionary<string, string> values) =>
+        int.TryParse(values.GetValueOrDefault("items"), NumberStyles.Integer, CultureInfo.InvariantCulture, out var count) ? count : 0;
+
+    private static InformationChartNativeObject ToReadObject(DocumentNode node) => new(
+        node.Path, node.Type, node.Text, node.Preview, node.ChildCount,
+        node.Format.ToDictionary(pair => pair.Key, pair => pair.Value?.ToString(), StringComparer.OrdinalIgnoreCase));
+
+    private static bool UsesChinese(InformationChartSpec spec)
+    {
+        var text = spec.Title + string.Concat(spec.Items.Select(item => item.Label));
+        return text.Any(character => character is >= '\u3400' and <= '\u9FFF');
+    }
+
+    private static string ToHeader(string value, bool chinese)
+    {
+        if (!chinese) return char.ToUpperInvariant(value[0]) + value[1..];
+        return value.ToLowerInvariant() switch
+        {
+            "actual" => "实际", "target" => "目标", "forecast" => "预测", "value" => "数值",
+            "contribution" => "贡献", "capacity" => "产能", "demand" => "需求", "low" => "低位",
+            "high" => "高位", "probability" => "概率", "impact" => "影响", _ => value,
+        };
+    }
     private static string DefaultTarget(string extension) => extension.ToLowerInvariant() switch { ".docx" => "/body", ".xlsx" => "/Sheet1", _ => "/slide[1]" };
 }
 

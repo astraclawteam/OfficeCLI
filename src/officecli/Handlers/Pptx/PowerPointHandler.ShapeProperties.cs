@@ -4041,7 +4041,11 @@ public partial class PowerPointHandler
         // PowerPoint will actually render.
         var textLines = text.Split('\n');
         int totalLines = 0;
-        bool wrappedADeclaredLine = false;
+        bool wrappedMetricDeclaredLine = false;
+        var businessMetricPattern = new System.Text.RegularExpressions.Regex(
+            @"(?:\d[\d,.]*\s*%|(?:CNY|RMB|USD|EUR|JPY|¥|￥|\$)\s*\d)",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase
+                | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
         foreach (var line in textLines)
         {
             if (line.Length == 0)
@@ -4052,13 +4056,17 @@ public partial class PowerPointHandler
             // Walk characters, accumulate width, wrap when exceeding usable width
             int linesForSegment = 1;
             double currentLineWidth = 0;
+            bool lineContainsBusinessMetric = businessMetricPattern.IsMatch(line);
             foreach (char ch in line)
             {
                 double charWidth = ParseHelpers.IsCjkOrFullWidth(ch) ? fontSizePt : fontSizePt * 0.55;
                 if (currentLineWidth + charWidth > usableWidth && currentLineWidth > 0)
                 {
                     linesForSegment++;
-                    wrappedADeclaredLine = true;
+                    if (lineContainsBusinessMetric)
+                    {
+                        wrappedMetricDeclaredLine = true;
+                    }
                     currentLineWidth = charWidth;
                 }
                 else
@@ -4075,11 +4083,7 @@ public partial class PowerPointHandler
         // overflow test while WPS leaves the percent sign or unit on a line by
         // itself. Require authors to make a two-line hierarchy explicit or
         // provide enough width for the complete metric.
-        bool containsBusinessMetric = System.Text.RegularExpressions.Regex.IsMatch(
-            text,
-            @"(?:\d[\d,.]*\s*%|(?:CNY|RMB|USD|EUR|JPY|¥|￥|\$)\s*\d)",
-            System.Text.RegularExpressions.RegexOptions.IgnoreCase
-                | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+        bool containsBusinessMetric = businessMetricPattern.IsMatch(text);
         bool hasDetachedBusinessUnit = System.Text.RegularExpressions.Regex.IsMatch(
             text,
             @"(?:\d[\d,.]*[ \t]*\r?\n[ \t]*(?:%|万|万元|百万|亿)|(?:CNY|RMB|USD|EUR|JPY|¥|￥|\$)[ \t]*\r?\n[ \t]*\d)",
@@ -4092,9 +4096,9 @@ public partial class PowerPointHandler
         // WPS uses wider digit/percent metrics than the generic Latin average
         // for several common fonts. A conservative 0.65em estimate matches
         // real WPS export while still allowing the widened 25pt KPI card.
-        bool conservativeMetricWrap = containsBusinessMetric && textLines.Any(line =>
+        bool conservativeMetricWrap = textLines.Any(line => businessMetricPattern.IsMatch(line) &&
             line.Sum(ch => ParseHelpers.IsCjkOrFullWidth(ch) ? fontSizePt : fontSizePt * 0.65) > usableWidth);
-        if (containsBusinessMetric && (wrappedADeclaredLine || conservativeMetricWrap))
+        if (containsBusinessMetric && (wrappedMetricDeclaredLine || conservativeMetricWrap))
         {
             return $"cross-suite text wrap risk: a percentage, currency or KPI token wraps inside a declared line at {fontSizePt:F1}pt; WPS may detach the unit or percent sign. widen the shape, reduce the font, or insert an intentional line break";
         }

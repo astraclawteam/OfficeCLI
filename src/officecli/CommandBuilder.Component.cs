@@ -55,6 +55,7 @@ static partial class CommandBuilder
         read.SetAction(result => SafeRun(() =>
         {
             var file = result.GetValue(readFile)!;
+            ResidentClient.SendSave(file.FullName);
             using var handler = DocumentHandlerFactory.Open(file.FullName, editable: false);
             var items = ProfessionalComponentCatalog.Read(handler, file.FullName, result.GetValue(instance));
             if (result.GetValue(jsonOption)) Console.WriteLine(JsonSerializer.Serialize(
@@ -92,6 +93,7 @@ static partial class CommandBuilder
                 AgentEventStream.CheckpointSaved("组件语义与绑定已保存", $"cp-{component.InstanceId}-validated");
                 AgentEventStream.StartStage("component_composition", "专业原生组件构图", target.Name,
                     "正在依据数据量、宿主格式和密度选择原生构图", "component_readback", component.Items.Count);
+                ResidentClient.SendClose(target.FullName);
                 using var handler = DocumentHandlerFactory.Open(target.FullName, editable: true);
                 var receipt = ProfessionalComponentCatalog.Apply(handler, target.FullName, component, update);
                 AgentEventStream.Progress(component.Items.Count, component.Items.Count, receipt.NativeObjectPath,

@@ -92,6 +92,7 @@ public class ProfessionalComponentTests
                     $"component readback failed for {Path.GetExtension(path)}: {JsonSerializer.Serialize(handler.Query("table").Select(item => item.Format))}");
                 var read = components[0];
                 Assert.Equal("kpi-strip", read.ComponentId);
+                Assert.Equal(1, read.ItemCount);
                 Assert.Equal(new[] { "revenue" }, read.FactRefs);
             }
         }
@@ -105,6 +106,34 @@ public class ProfessionalComponentTests
             Assert.Empty(new OpenXmlValidator(FileFormatVersions.Microsoft365).Validate(package));
         using (var package = PresentationDocument.Open(pptx, false))
             Assert.Empty(new OpenXmlValidator(FileFormatVersions.Microsoft365).Validate(package));
+    }
+
+    [Fact]
+    public void ChineseComponentsUseChineseBusinessHeaders()
+    {
+        using var temp = new TempDirectory();
+        var pptx = temp.File("component-zh.pptx");
+        global::OfficeCli.BlankDocCreator.Create(pptx, "zh-CN");
+        using (var presentation = new PowerPointHandler(pptx, editable: true))
+            presentation.Add("/", "slide", null, new Dictionary<string, string> { ["layout"] = "blank" });
+        var spec = new ProfessionalComponentSpec
+        {
+            ComponentId = "owner-time-standard", InstanceId = "action-owner", Title = "行动责任",
+            Items = [new ProfessionalComponentItem { Label = "增配工程师", Fields = new Dictionary<string, JsonElement>
+            {
+                ["owner"] = Json("交付负责人"), ["timeframe"] = Json("9月9日"), ["standard"] = Json("确认率不低于98%"),
+            }}],
+            ActionRefs = ["capacity-action"],
+        };
+        using (var handler = DocumentHandlerFactory.Open(pptx, editable: true))
+            ProfessionalComponentCatalog.Apply(handler, pptx, spec, update: false);
+        using var archive = System.IO.Compression.ZipFile.OpenRead(pptx);
+        var xml = string.Concat(archive.Entries.Where(item => item.FullName.StartsWith("ppt/slides/", StringComparison.OrdinalIgnoreCase)
+            && item.FullName.EndsWith(".xml", StringComparison.OrdinalIgnoreCase))
+            .Select(entry => { using var reader = new StreamReader(entry.Open()); return reader.ReadToEnd(); }));
+        Assert.Contains("事项", xml);
+        Assert.Contains("负责人", xml);
+        Assert.Contains("验收标准", xml);
     }
 
     private static ProfessionalComponentSpec KpiSpec(string? target) => new()

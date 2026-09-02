@@ -29,6 +29,7 @@ static partial class CommandBuilder
                 AgentEventStream.TaskStarted($"已接收 {pageSpec.Format} 专业 PageSpec", "page_spec_validation");
                 AgentEventStream.StartStage("page_spec_validation", "页面故事板与格式约束校验", pageSpec.DocumentId,
                     "正在校验页面任务、内容槽位、追溯绑定和格式差异", "format_composition", pageSpec.Pages.Count);
+                ResidentClient.SendClose(target.FullName);
                 using var handler = DocumentHandlerFactory.Open(target.FullName, editable: true);
                 var receipt = ProfessionalPageCompiler.Compile(handler, target.FullName, pageSpec);
                 AgentEventStream.Progress(pageSpec.Pages.Count, pageSpec.Pages.Count, target.Name,

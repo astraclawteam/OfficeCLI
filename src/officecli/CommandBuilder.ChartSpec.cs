@@ -42,6 +42,7 @@ static partial class CommandBuilder
                 AgentEventStream.TaskStarted($"已接收信息设计图表 {chart.ChartType}", "chart_selection");
                 AgentEventStream.StartStage("chart_selection", "图表语义选择", chart.ChartId,
                     "正在校验 claim、数据结构、轴策略和降级条件", "chart_composition", chart.Items.Count);
+                ResidentClient.SendClose(target.FullName);
                 using var handler = DocumentHandlerFactory.Open(target.FullName, editable: true);
                 var receipt = InformationChartEngine.Apply(handler, target.FullName, chart);
                 AgentEventStream.Progress(chart.Items.Count, chart.Items.Count, receipt.NativeObjectPath,
@@ -64,6 +65,7 @@ static partial class CommandBuilder
         read.SetAction(result => SafeRun(() =>
         {
             var target = result.GetValue(readFile)!;
+            ResidentClient.SendSave(target.FullName);
             using var handler = DocumentHandlerFactory.Open(target.FullName, editable: false);
             var charts = InformationChartEngine.Read(handler);
             if (result.GetValue(jsonOption)) Console.WriteLine(JsonSerializer.Serialize(

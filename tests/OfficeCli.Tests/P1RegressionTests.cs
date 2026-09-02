@@ -482,4 +482,27 @@ public sealed class P1RegressionTests
             && issue.Message.Contains("separate lines", StringComparison.Ordinal));
     }
 
+    [Fact]
+    public void PptAuditDoesNotBlameShortMetricWhenOnlyNonMetricProseWraps()
+    {
+        using var temp = new TempDirectory();
+        var path = temp.File("wps-prose-wrap-with-short-metric.pptx");
+        BlankDocCreator.Create(path, "zh-CN");
+        using (var handler = new PowerPointHandler(path, editable: true))
+        {
+            handler.Add("/", "slide", null, new Dictionary<string, string>());
+            handler.Add("/slide[1]", "shape", null, new Dictionary<string, string>
+            {
+                ["text"] = "边界未冻结将导致设备返工和春节切换延期。\n冷链损耗率2.8%。",
+                ["x"] = "374pt", ["y"] = "148pt", ["width"] = "230pt", ["height"] = "256pt",
+                ["font.size"] = "13pt", ["autoFit"] = "normal",
+            });
+        }
+
+        using var audit = new PowerPointHandler(path, editable: false);
+        Assert.DoesNotContain(audit.ViewAsIssues(), issue =>
+            issue.Subtype == IssueSubtypes.TextOverflow
+            && issue.Message.Contains("cross-suite text wrap risk", StringComparison.Ordinal));
+    }
+
 }

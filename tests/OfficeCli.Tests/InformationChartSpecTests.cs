@@ -3,6 +3,7 @@ using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Validation;
 using OfficeCli.Core;
 using OfficeCli.Handlers;
+using System.Text.Json;
 using Xunit;
 
 namespace OfficeCli.Tests;
@@ -73,6 +74,11 @@ public class InformationChartSpecTests
                 Assert.Equal(new[] { "revenue-jun", "revenue-jul" }, chart.FactRefs);
                 Assert.Equal(new[] { "growth-accelerated" }, chart.ClaimRefs);
                 Assert.Equal("false", chart.NativeObject.Format["gridlines"]?.ToString());
+                Assert.Equal(2, chart.ItemCount);
+                var serialized = JsonSerializer.Serialize(
+                    new InformationChartReadResponse(true, charts.Count, charts),
+                    InformationChartJsonContext.Default.InformationChartReadResponse);
+                Assert.Contains("nativeObject", serialized);
             }
             Assert.True(PackageChartXmlContains(path, "1F4E78"), $"primary chart color did not persist in {Path.GetExtension(path)}");
         }
@@ -80,6 +86,50 @@ public class InformationChartSpecTests
         using (var package = WordprocessingDocument.Open(docx, false)) Assert.Empty(validator.Validate(package));
         using (var package = SpreadsheetDocument.Open(xlsx, false)) Assert.Empty(validator.Validate(package));
         using (var package = PresentationDocument.Open(pptx, false)) Assert.Empty(validator.Validate(package));
+    }
+
+    [Fact]
+    public void PercentagePointsAreNormalizedForNativePercentNumberFormats()
+    {
+        using var temp = new TempDirectory();
+        var pptx = temp.File("percentages.pptx");
+        global::OfficeCli.BlankDocCreator.Create(pptx, "zh-CN");
+        using (var presentation = new PowerPointHandler(pptx, editable: true))
+            presentation.Add("/", "slide", null, new Dictionary<string, string> { ["layout"] = "blank" });
+        var spec = new InformationChartSpec
+        {
+            ChartId = "confirmation-rate", ChartType = "scenario-comparison", Title = "确认率情景", Unit = "%",
+            FactRefs = ["rate"], ClaimRefs = ["capacity"], AxisPolicy = "zero",
+            Items = [
+                new InformationChartItem { Label = "当前", Value = 82 },
+                new InformationChartItem { Label = "调配", Value = 90 },
+                new InformationChartItem { Label = "增配", Value = 98 },
+            ],
+        };
+        using (var handler = DocumentHandlerFactory.Open(pptx, editable: true))
+            InformationChartEngine.Apply(handler, pptx, spec);
+        using var archive = System.IO.Compression.ZipFile.OpenRead(pptx);
+        var xml = archive.Entries.Where(item => item.FullName.Contains("/charts/", StringComparison.OrdinalIgnoreCase)
+            && item.FullName.EndsWith(".xml", StringComparison.OrdinalIgnoreCase))
+            .Select(entry => { using var reader = new StreamReader(entry.Open()); return reader.ReadToEnd(); }).First();
+        Assert.Contains(">0.82<", xml);
+        Assert.Contains(">0.98<", xml);
+        Assert.DoesNotContain(">82<", xml);
+    }
+
+    [Fact]
+    public void MixedPercentageScalesAreRejectedUnlessExplicit()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"officecli-chart-{Guid.NewGuid():N}.json");
+        try
+        {
+            File.WriteAllText(path, """
+            {"schemaVersion":1,"chartId":"rates","chartType":"scenario-comparison","title":"Rates","unit":"%","items":[{"label":"A","value":0.82},{"label":"B","value":90}],"factRefs":["rates"],"claimRefs":["decision"]}
+            """);
+            var error = Assert.Throws<CliException>(() => InformationChartEngine.Parse(path));
+            Assert.Equal("chart_percentage_scale_ambiguous", error.Code);
+        }
+        finally { File.Delete(path); }
     }
 
     private static bool PackageChartXmlContains(string path, string expected)

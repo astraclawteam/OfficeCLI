@@ -164,11 +164,15 @@ public static class ProfessionalPageCompiler
             var page = spec.Pages[pageIndex];
             var slide = $"/slide[{pageIndex + 1}]";
             var blocks = new List<ProfessionalPageBlockReceipt>();
+            var cjkTitle = page.PrimaryClaim.Any(character => character is >= '\u3400' and <= '\u9FFF');
+            var titleSize = page.PageRole.Equals("cover", StringComparison.OrdinalIgnoreCase)
+                ? (cjkTitle && page.PrimaryClaim.Length > 24 ? 34 : 40)
+                : (cjkTitle && page.PrimaryClaim.Length > 25 ? 26 : 30);
             var title = handler.Add(slide, "textbox", null, new()
             {
                 ["name"] = "pagespec-title-" + page.PageId, ["text"] = page.PrimaryClaim,
-                ["x"] = "1.2cm", ["y"] = "0.7cm", ["width"] = "31cm", ["height"] = "1.4cm",
-                ["font.size"] = page.PageRole.Equals("cover", StringComparison.OrdinalIgnoreCase) ? "40" : "34",
+                ["x"] = "1.2cm", ["y"] = "0.65cm", ["width"] = "31cm", ["height"] = "1.9cm",
+                ["font.size"] = titleSize.ToString(System.Globalization.CultureInfo.InvariantCulture),
                 ["font.bold"] = "true", ["font.color"] = spec.BrandTokens.GetValueOrDefault("text", "172033"),
             });
             blocks.Add(Receipt(new ProfessionalPageBlock { BlockId = page.PageId + "-claim", Kind = "narrative", ClaimRefs = page.Blocks.SelectMany(x => x.ClaimRefs).Distinct().ToList() }, title));
@@ -183,10 +187,11 @@ public static class ProfessionalPageCompiler
                 if (block.Chart is not null) block.Chart.Target = target;
                 if (block.Component is not null)
                 {
+                    var tableHeight = Math.Min(height, Math.Max(2.9, (block.Component.Items.Count + 1) * 1.15));
                     block.Component.ThemeTokens["placement.x"] = $"{x:0.0}cm";
                     block.Component.ThemeTokens["placement.y"] = $"{y:0.0}cm";
                     block.Component.ThemeTokens["placement.width"] = $"{width:0.0}cm";
-                    block.Component.ThemeTokens["placement.height"] = $"{height:0.0}cm";
+                    block.Component.ThemeTokens["placement.height"] = $"{tableHeight:0.0}cm";
                 }
                 if (block.Chart is not null)
                 {
@@ -214,7 +219,7 @@ public static class ProfessionalPageCompiler
             {
                 ["name"] = "pagespec-action-" + page.PageId,
                 ["text"] = $"{Label(spec, "下一步", "Next action")} · {page.ReaderAction}",
-                ["x"] = "1.2cm", ["y"] = "17.25cm", ["width"] = "31cm", ["height"] = "0.85cm",
+                ["x"] = "1.2cm", ["y"] = "17.3cm", ["width"] = "31cm", ["height"] = "0.75cm",
                 ["font.size"] = "12", ["font.bold"] = "true", ["font.color"] = spec.BrandTokens.GetValueOrDefault("primary", "1F4E78"),
                 ["fill"] = "none", ["line"] = "none",
             });
@@ -227,11 +232,16 @@ public static class ProfessionalPageCompiler
 
     private static PowerPointBlockLayout[] BuildPowerPointLayouts(ProfessionalPage page)
     {
-        const double x = 1.2, y = 2.55, width = 31.0, height = 14.05, gap = 0.65;
+        const double x = 1.2, y = 3.05, width = 31.0, height = 13.55, gap = 0.65;
         var count = page.Blocks.Count;
         var result = new PowerPointBlockLayout[count];
-        var primary = page.Blocks.FindIndex(block => block.Importance.Equals("primary", StringComparison.OrdinalIgnoreCase));
-        if (primary < 0) primary = page.Blocks.FindIndex(block => block.Kind is "chart" or "component");
+        var primary = page.Blocks.FindIndex(block => block.Kind == "chart"
+            && block.Importance.Equals("primary", StringComparison.OrdinalIgnoreCase));
+        if (primary < 0) primary = page.Blocks.FindIndex(block => block.Kind == "chart");
+        if (primary < 0) primary = page.Blocks.FindIndex(block => block.Kind == "component"
+            && block.Importance.Equals("primary", StringComparison.OrdinalIgnoreCase));
+        if (primary < 0) primary = page.Blocks.FindIndex(block => block.Kind == "component");
+        if (primary < 0) primary = page.Blocks.FindIndex(block => block.Importance.Equals("primary", StringComparison.OrdinalIgnoreCase));
         if (primary < 0) primary = 0;
         if (count == 1)
         {
@@ -241,8 +251,24 @@ public static class ProfessionalPageCompiler
         var supporting = Enumerable.Range(0, count).Where(index => index != primary).ToArray();
         if (count == 2)
         {
-            result[primary] = new(x, y, 20.15, height);
-            result[supporting[0]] = new(x + 20.15 + gap, y + 0.55, width - 20.15 - gap, height - 1.1);
+            var twoBlockPrimaryWidth = page.Blocks[primary].Kind == "chart" ? 18.4 : 17.0;
+            result[primary] = new(x, y, twoBlockPrimaryWidth, height);
+            result[supporting[0]] = new(x + twoBlockPrimaryWidth + gap, y, width - twoBlockPrimaryWidth - gap, height);
+            return result;
+        }
+        if (count == 3
+            && page.Blocks.Count(block => block.Kind == "narrative") == 1
+            && page.Blocks.Any(block => block.Kind == "chart")
+            && page.Blocks.Any(block => block.Kind == "component"))
+        {
+            var narrative = page.Blocks.FindIndex(block => block.Kind == "narrative");
+            var chart = page.Blocks.FindIndex(block => block.Kind == "chart");
+            var component = page.Blocks.FindIndex(block => block.Kind == "component");
+            const double narrativeHeight = 2.15;
+            const double visualWidth = 18.4;
+            result[narrative] = new(x, y, width, narrativeHeight);
+            result[chart] = new(x, y + narrativeHeight + gap, visualWidth, height - narrativeHeight - gap);
+            result[component] = new(x + visualWidth + gap, y + narrativeHeight + gap, width - visualWidth - gap, height - narrativeHeight - gap);
             return result;
         }
         var decisionLed = page.PageRole.Equals("decision", StringComparison.OrdinalIgnoreCase)

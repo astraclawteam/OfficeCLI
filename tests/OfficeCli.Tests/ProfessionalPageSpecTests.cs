@@ -59,13 +59,13 @@ public class ProfessionalPageSpecTests
         {
             var slide = handler.Get("/slide[1]", 2);
             var title = slide.Children.Single(item => item.Format.GetValueOrDefault("name")?.ToString() == "pagespec-title-decision");
-            Assert.Equal("34pt", title.Format["size"]?.ToString());
+            Assert.Equal("30pt", title.Format["size"]?.ToString());
             var narrative = slide.Children.Single(item => item.Format.GetValueOrDefault("name")?.ToString() == "pagespec-block-context");
             Assert.Equal("none", narrative.Format["fill"]?.ToString());
             Assert.Contains(slide.Children, item => item.Text == "Next action · Approve capacity");
             var chart = slide.Children.Single(item => item.Type == "chart");
             Assert.Equal("false", chart.Format["gridlines"]?.ToString());
-            Assert.True(ParseLengthInPoints(chart.Format["width"]) > ParseLengthInPoints(narrative.Format["width"]));
+            Assert.True(ParseLengthInPoints(chart.Format["height"]) > ParseLengthInPoints(narrative.Format["height"]));
         }
     }
 
