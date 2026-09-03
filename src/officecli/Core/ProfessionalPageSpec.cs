@@ -309,7 +309,11 @@ public static class ProfessionalPageCompiler
             foreach (var action in block.ActionRefs) if (!block.Component.ActionRefs.Contains(action)) block.Component.ActionRefs.Add(action);
             foreach (var token in document.BrandTokens) block.Component.ThemeTokens.TryAdd(token.Key, token.Value);
             var receipt = ProfessionalComponentCatalog.Apply(handler, filePath, block.Component, update: false);
-            return Receipt(block, receipt.NativeObjectPath);
+            return new ProfessionalPageBlockReceipt(block.BlockId, block.Kind, receipt.NativeObjectPath,
+                receipt.FactRefs.Distinct(StringComparer.Ordinal).ToList(),
+                receipt.ClaimRefs.Distinct(StringComparer.Ordinal).ToList(),
+                receipt.DecisionRefs.Distinct(StringComparer.Ordinal).ToList(),
+                receipt.ActionRefs.Distinct(StringComparer.Ordinal).ToList());
         }
         if (block.Chart is not null)
         {
@@ -318,7 +322,11 @@ public static class ProfessionalPageCompiler
             foreach (var claim in block.ClaimRefs) if (!block.Chart.ClaimRefs.Contains(claim)) block.Chart.ClaimRefs.Add(claim);
             foreach (var token in document.BrandTokens) block.Chart.ThemeTokens.TryAdd(token.Key, token.Value);
             var receipt = InformationChartEngine.Apply(handler, filePath, block.Chart);
-            return Receipt(block, receipt.NativeObjectPath);
+            return new ProfessionalPageBlockReceipt(block.BlockId, block.Kind, receipt.NativeObjectPath,
+                receipt.FactRefs.Distinct(StringComparer.Ordinal).ToList(),
+                receipt.ClaimRefs.Distinct(StringComparer.Ordinal).ToList(),
+                block.DecisionRefs.Distinct(StringComparer.Ordinal).ToList(),
+                block.ActionRefs.Distinct(StringComparer.Ordinal).ToList());
         }
         string path;
         if (format == "docx")

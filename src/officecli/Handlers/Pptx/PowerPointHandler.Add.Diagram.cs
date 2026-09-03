@@ -162,6 +162,7 @@ public partial class PowerPointHandler
             const double margin = 0.6;
             double boxX = hasX ? ParseEmu(xs!) / CmToEmu : margin;
             double boxY = hasY ? ParseEmu(ys!) / CmToEmu : margin;
+            double contentBottom = slideH - margin;
             if (!hasY && !hasH)
             {
                 double occupiedTop = margin;
@@ -175,13 +176,22 @@ public partial class PowerPointHandler
                     double titleY = titleYEmu / CmToEmu;
                     double titleWidth = titleWidthEmu / CmToEmu;
                     double titleHeight = titleHeightEmu / CmToEmu;
-                    if (titleY <= slideH * 0.3 && titleWidth >= slideW * 0.35 && titleHeight > 0)
+                    // Empty decorative panels are not title bands. Treating a
+                    // large background container as a heading used to collapse
+                    // appended diagrams into a tiny strip at the foot of a slide.
+                    string visibleText = string.Concat(existingShape.TextBody?.Descendants<DocumentFormat.OpenXml.Drawing.Text>()
+                        .Select(item => item.Text) ?? []);
+                    bool hasVisibleText = !string.IsNullOrWhiteSpace(visibleText);
+                    bool isWideBand = titleWidth >= slideW * 0.35 && titleHeight > 0 && titleHeight <= slideH * 0.20;
+                    if (hasVisibleText && isWideBand && titleY <= slideH * 0.3)
                         occupiedTop = Math.Max(occupiedTop, titleY + titleHeight + 0.35);
+                    if (hasVisibleText && isWideBand && titleY >= slideH * 0.72)
+                        contentBottom = Math.Min(contentBottom, titleY - 0.35);
                 }
                 boxY = Math.Min(occupiedTop, Math.Max(margin, slideH - margin - 1.0));
             }
             double boxW = hasW ? ParseEmu(ws!) / CmToEmu : Math.Max(0.1, slideW - boxX - margin);
-            double boxH = hasH ? ParseEmu(hs!) / CmToEmu : Math.Max(0.1, slideH - boxY - margin);
+            double boxH = hasH ? ParseEmu(hs!) / CmToEmu : Math.Max(0.1, contentBottom - boxY);
             double fit = Math.Min(boxW / natW, boxH / natH);
             sc = fit;
             // Uniform scale leaves slack on one axis; CENTRE the fitted diagram in

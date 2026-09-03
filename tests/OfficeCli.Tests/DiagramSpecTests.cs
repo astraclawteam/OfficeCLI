@@ -284,6 +284,50 @@ public sealed class DiagramSpecTests
     }
 
     [Fact]
+    public void NativeDiagramIgnoresEmptyBackgroundPanelAndReservesBottomNote()
+    {
+        using var temp = new TempDirectory();
+        var specPath = temp.File("diagram.json");
+        File.WriteAllText(specPath, ArchitectureSpec.Replace("\"top-down\"", "\"left-right\""));
+        var pptx = temp.File("panel-diagram.pptx");
+        BlankDocCreator.Create(pptx, "zh-CN");
+
+        using (var handler = new PowerPointHandler(pptx, editable: true))
+        {
+            handler.Add("/", "slide", null, new Dictionary<string, string>());
+            handler.Add("/slide[1]", "shape", null, new Dictionary<string, string>
+            {
+                ["text"] = "经营事实到管理动作", ["x"] = "1.2cm", ["y"] = "0.6cm",
+                ["width"] = "31.4cm", ["height"] = "1.4cm", ["fill"] = "none", ["line"] = "none",
+            });
+            handler.Add("/slide[1]", "shape", null, new Dictionary<string, string>
+            {
+                ["x"] = "2.1cm", ["y"] = "4.2cm", ["width"] = "29.6cm", ["height"] = "11.5cm",
+                ["fill"] = "#F7F9FC", ["geometry"] = "roundRect",
+            });
+            handler.Add("/slide[1]", "shape", null, new Dictionary<string, string>
+            {
+                ["text"] = "来源：经营事实台账", ["x"] = "2.1cm", ["y"] = "17.0cm",
+                ["width"] = "29.6cm", ["height"] = "0.7cm", ["fill"] = "none", ["line"] = "none",
+            });
+            handler.Add("/slide[1]", "diagram", null, new Dictionary<string, string> { ["spec"] = specPath });
+        }
+
+        using var package = PresentationDocument.Open(pptx, false);
+        Assert.Empty(new OpenXmlValidator().Validate(package));
+        var tree = package.PresentationPart!.SlideParts.Single().Slide!.CommonSlideData!.ShapeTree!;
+        var diagram = Assert.Single(tree.Elements<GroupShape>());
+        var transform = diagram.GroupShapeProperties!.TransformGroup!;
+        var slide = package.PresentationPart.Presentation.SlideSize!;
+        Assert.True(transform.Extents!.Cx!.Value >= slide.Cx!.Value * 0.45,
+            "an empty background panel must not collapse the diagram width");
+        Assert.True(transform.Extents.Cy!.Value >= slide.Cy!.Value * 0.28,
+            "an empty background panel must not collapse the diagram height");
+        Assert.True(transform.Offset!.Y!.Value + transform.Extents.Cy.Value < (long)(17.0 * 360000),
+            "the diagram must stay above the existing bottom source note");
+    }
+
+    [Fact]
     public void ShapeConnectorDiagramCanBeRefreshedInPlaceByStableDiagramId()
     {
         using var temp = new TempDirectory();

@@ -44,6 +44,11 @@ public class ProfessionalPageSpecTests
                 Assert.Equal(format switch { "docx" => "WordComposer", "xlsx" => "ExcelComposer", _ => "PowerPointComposer" }, receipt.Composer);
                 Assert.Single(receipt.Pages);
                 Assert.Equal(4, receipt.Pages[0].Blocks.Count);
+                var componentBlock = receipt.Pages[0].Blocks.Single(item => item.BlockId == "kpi");
+                Assert.Contains("revenue-jul", componentBlock.FactRefs);
+                var chartBlock = receipt.Pages[0].Blocks.Single(item => item.BlockId == "trend");
+                Assert.Equal(["revenue-jun", "revenue-jul"], chartBlock.FactRefs);
+                Assert.Equal(["growth-accelerated"], chartBlock.ClaimRefs);
             }
             using (var handler = DocumentHandlerFactory.Open(file, editable: false))
             {
@@ -97,8 +102,8 @@ public class ProfessionalPageSpecTests
             ReaderTakeaway = "Growth is above target", ReaderAction = "Approve capacity", Density = "balanced",
             Blocks = [
                 new ProfessionalPageBlock { BlockId = "context", Kind = "narrative", Importance = "context", Title = "Context", Text = "Actual performance is above target.", FactRefs = ["revenue-jul"], ClaimRefs = ["growth-accelerated"] },
-                new ProfessionalPageBlock { BlockId = "kpi", Kind = "component", Importance = "supporting", FactRefs = ["revenue-jul"], Component = new ProfessionalComponentSpec { ComponentId = "kpi-strip", InstanceId = "revenue-kpi", Title = "Revenue", Items = [new ProfessionalComponentItem { Label = "Revenue", Fields = new Dictionary<string, System.Text.Json.JsonElement> { ["value"] = System.Text.Json.JsonSerializer.SerializeToElement("CNY 12.8M") } }], FactRefs = ["revenue-jul"] } },
-                new ProfessionalPageBlock { BlockId = "trend", Kind = "chart", Importance = "primary", FactRefs = ["revenue-jun", "revenue-jul"], ClaimRefs = ["growth-accelerated"], Chart = new InformationChartSpec { ChartId = "revenue-trend", ChartType = "annotated-trend", Title = "Revenue accelerated", Unit = "CNY million", AxisPolicy = "zero", FactRefs = ["revenue-jun", "revenue-jul"], ClaimRefs = ["growth-accelerated"], Items = [new InformationChartItem { Label = "Jun", Actual = 10.8 }, new InformationChartItem { Label = "Jul", Actual = 12.8 }] } },
+                new ProfessionalPageBlock { BlockId = "kpi", Kind = "component", Importance = "supporting", Component = new ProfessionalComponentSpec { ComponentId = "kpi-strip", InstanceId = "revenue-kpi", Title = "Revenue", Items = [new ProfessionalComponentItem { Label = "Revenue", Fields = new Dictionary<string, System.Text.Json.JsonElement> { ["value"] = System.Text.Json.JsonSerializer.SerializeToElement("CNY 12.8M") } }], FactRefs = ["revenue-jul"] } },
+                new ProfessionalPageBlock { BlockId = "trend", Kind = "chart", Importance = "primary", Chart = new InformationChartSpec { ChartId = "revenue-trend", ChartType = "annotated-trend", Title = "Revenue accelerated", Unit = "CNY million", AxisPolicy = "zero", FactRefs = ["revenue-jun", "revenue-jul"], ClaimRefs = ["growth-accelerated"], Items = [new InformationChartItem { Label = "Jun", Actual = 10.8 }, new InformationChartItem { Label = "Jul", Actual = 12.8 }] } },
             ],
         }],
     };
