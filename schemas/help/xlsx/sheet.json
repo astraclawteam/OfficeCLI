@@ -33,10 +33,10 @@
     },
     "tabColor": {
       "type": "color",
-      "description": "sheet tab color.",
+      "description": "sheet tab color. Accepts hex / named / rgb(...) or a scheme color name (accent1-accent6, lt1/dk1, ...) with an optional tint suffix ('accent3+tint40' = Excel's \"Accent3, Lighter 40%\"; negative darkens).",
       "add": true, "set": true, "get": true,
-      "examples": ["--prop tabColor=4472C4"],
-      "readback": "#RRGGBB uppercase",
+      "examples": ["--prop tabColor=4472C4", "--prop tabColor=accent3+tint40"],
+      "readback": "#RRGGBB uppercase, or scheme color name with any tint suffix (e.g. accent3+tint40)",
       "enforcement": "report"
     },
     "hidden": {

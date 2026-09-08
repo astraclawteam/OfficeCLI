@@ -599,7 +599,10 @@ public partial class ExcelHandler
                         ExcelDataFormatter.ToExcelSerial(inferredDate, IsWorkbookDate1904()).ToString(System.Globalization.CultureInfo.InvariantCulture));
                     cell.DataType = null;
                 }
-                else if (!double.TryParse(safeValue, out var dbl) || !double.IsFinite(dbl))
+                // HasValidThousandsGrouping: AllowThousands reads "1,5" as 15,
+                // silently 10x-ing a decimal-comma value (issue #352 follow-up).
+                else if (!HasValidThousandsGrouping(safeValue)
+                    || !double.TryParse(safeValue, out var dbl) || !double.IsFinite(dbl))
                     cell.DataType = new EnumValue<CellValues>(CellValues.String);
                 else
                     // R-fuzz2-1: TryParse accepts spellings Excel's <v> parser
@@ -1236,7 +1239,7 @@ public partial class ExcelHandler
             // first run to a cell that already had a value threw the value away
             // (e.g. value="Hello World" + add run "Hi" → cell became just "Hi").
             string? runExistingText = runCell.DataType?.Value == CellValues.InlineString
-                ? runCell.InlineString?.InnerText
+                ? GetVisibleSpreadsheetText(runCell.InlineString)
                 : runCell.CellValue?.Text;
 
             runSsi = new SharedStringItem();

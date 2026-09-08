@@ -300,7 +300,12 @@ public partial class ExcelHandler
                             // matching how "Infinity" already behaves.
                             // R-fuzz2-1: numeric text is stored in canonical form
                             // ("+5" / "1,234" parse fine but corrupt <v> verbatim).
-                            if (double.TryParse(cellValue, out var dbl) && double.IsFinite(dbl))
+                            // HasValidThousandsGrouping: AllowThousands reads
+                            // "1,5" as 15, so a decimal-comma value would be
+                            // silently 10x-ed here while the explicit
+                            // type=number path above rejects the same text.
+                            if (HasValidThousandsGrouping(cellValue)
+                                && double.TryParse(cellValue, out var dbl) && double.IsFinite(dbl))
                             {
                                 cell.CellValue = new CellValue(NormalizeNumericCellText(cellValue, dbl));
                                 cell.DataType = null;
@@ -447,6 +452,19 @@ public partial class ExcelHandler
                     if (!properties.Keys.Any(k => k.Equals("arrayformula", StringComparison.OrdinalIgnoreCase)))
                         unsupported.Add("ref (only valid alongside arrayformula=)");
                     break;
+                // Phonetic guide (furigana / CJK ruby). Add has supported this
+                // since R8-3; Set rejected it as unsupported, so a guide could
+                // only be attached by recreating the cell — the schema even
+                // declared add:false, hiding the capability entirely. Reuse the
+                // Add-side helper (it already resolves the existing base text
+                // for a shared-string cell) so add and set stay symmetric.
+                case "phonetic":
+                    if (string.IsNullOrEmpty(value))
+                        unsupported.Add("phonetic (empty value — pass the reading text)");
+                    else
+                        ApplyPhoneticToCell(cell, worksheet, value, properties);
+                    break;
+
                 // CONSISTENCY(xlsx-hyperlink-cell-backed): `query hyperlink` emits
                 // the backing cell path with Format["url"]; accept `url` as an
                 // alias for the canonical cell `link` so that query result round-

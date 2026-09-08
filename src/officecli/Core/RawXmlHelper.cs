@@ -619,6 +619,9 @@ internal static class RawXmlHelper
         // original package on disk (the in-memory clone re-serializes a healthy
         // Content_Types, so the defect is only visible in the source file).
         errors.AddRange(DetectMissingDefaultRelsContentType(package, filePath));
+        // Spreadsheet-only: a ref/sqref shifted past row 1048576 / column XFD is
+        // schema-legal but makes Excel refuse the workbook (0x800A03EC).
+        errors.AddRange(DetectOutOfGridSheetRefs(clone));
         var validator = new OpenXmlValidator(DocumentFormat.OpenXml.FileFormatVersions.Microsoft365);
         // BUG-R6-08: documents containing w:numPicBullet can trip an NRE
         // inside SDK validation when one of its child accessors hits a
@@ -1009,6 +1012,150 @@ internal static class RawXmlHelper
                 // Reflection/serialize hiccup on one part must not fail validate.
             }
         }
+    }
+
+    /// <summary>
+    /// Spreadsheet grid check: an Excel sheet stops at row 1048576 / column XFD.
+    /// A <c>ref</c> or <c>sqref</c> reaching past that is schema-legal — the SDK
+    /// validator accepts it — yet real Excel refuses to open the workbook with
+    /// HRESULT 0x800A03EC. Row/column inserts are how one appears in practice: a
+    /// range that already ends at the last row gets shifted one past the grid.
+    /// Flag it here so <c>validate</c> stops passing a file Excel rejects.
+    ///
+    /// Scans every worksheet part — x14 conditional formatting included, it
+    /// lives in the same part's extLst — plus its table-definition parts.
+    /// Tokens that are not plain A1-style refs (structured refs, sheet-qualified
+    /// names) are skipped rather than guessed at, so this never false-positives.
+    /// </summary>
+    private static List<ValidationError> DetectOutOfGridSheetRefs(OpenXmlPackage package)
+    {
+        var result = new List<ValidationError>();
+        if (package is not SpreadsheetDocument spreadsheet) return result;
+        var wbPart = spreadsheet.WorkbookPart;
+        if (wbPart == null) return result;
+
+        foreach (var wsPart in wbPart.WorksheetParts)
+        {
+            ScanPart(wsPart);
+            foreach (var tablePart in wsPart.TableDefinitionParts) ScanPart(tablePart);
+            if (wsPart.DrawingsPart != null) ScanDrawingAnchors(wsPart.DrawingsPart);
+        }
+        return result;
+
+        void ScanPart(OpenXmlPart part)
+        {
+            try
+            {
+                using var s = part.GetStream(FileMode.Open, FileAccess.Read);
+                using var r = XmlReader.Create(s, new XmlReaderSettings
+                {
+                    DtdProcessing = DtdProcessing.Prohibit,
+                    XmlResolver = null,
+                });
+                while (r.Read())
+                {
+                    if (r.NodeType != XmlNodeType.Element || !r.HasAttributes) continue;
+                    var element = r.LocalName;
+                    while (r.MoveToNextAttribute())
+                    {
+                        if (r.LocalName is not ("ref" or "sqref")) continue;
+                        var offender = FirstOutOfGridToken(r.Value);
+                        if (offender == null) continue;
+                        result.Add(new ValidationError(
+                            "OutOfGridReference",
+                            $"<{element}> {r.LocalName}=\"{r.Value}\" points at '{offender}', outside Excel's "
+                            + "grid (rows 1-1048576, columns A-XFD). The workbook is schema-valid but Excel "
+                            + "refuses to open it (0x800A03EC).",
+                            $"/{element}", part.Uri.ToString()));
+                    }
+                    r.MoveToElement();
+                }
+            }
+            catch
+            {
+                // Unreadable/malformed XML is already reported by PreflightXmlParts.
+            }
+        }
+
+        // Drawing anchors carry the grid position as element text (<xdr:row>,
+        // <xdr:col>), not as a ref attribute, and overflow the same way when a
+        // row/column insert pushes a shape sitting on the grid edge.
+        void ScanDrawingAnchors(OpenXmlPart part)
+        {
+            const string XdrNs = "http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing";
+            try
+            {
+                using var s = part.GetStream(FileMode.Open, FileAccess.Read);
+                var doc = XDocument.Load(s);
+                foreach (var marker in doc.Descendants())
+                {
+                    if (marker.Name.NamespaceName != XdrNs) continue;
+                    var axis = marker.Name.LocalName;
+                    if (axis is not ("row" or "col")) continue;
+                    if (!long.TryParse(marker.Value.Trim(), out var idx)) continue;
+                    var max = axis == "row" ? 1048576L : 16384L;
+                    if (idx < 0 || idx > max)
+                    {
+                        result.Add(new ValidationError(
+                            "OutOfGridReference",
+                            $"drawing anchor <xdr:{axis}>{marker.Value}</xdr:{axis}> is outside Excel's grid "
+                            + $"(0-{max}). The workbook is schema-valid but Excel refuses to open it "
+                            + "(0x800A03EC).",
+                            $"/xdr:{axis}", part.Uri.ToString()));
+                    }
+                }
+            }
+            catch
+            {
+                // Unreadable/malformed XML is already reported by PreflightXmlParts.
+            }
+        }
+    }
+
+    /// <summary>
+    /// First endpoint in a ref/sqref value that falls outside Excel's grid, or
+    /// null when every endpoint is in range. Handles space-separated sqref
+    /// lists, <c>A1:B2</c> ranges, whole-column (<c>A:A</c>) and whole-row
+    /// (<c>1:5</c>) forms, and <c>$</c> anchors.
+    /// </summary>
+    private static string? FirstOutOfGridToken(string refValue)
+    {
+        foreach (var area in refValue.Split(' ', StringSplitOptions.RemoveEmptyEntries))
+        {
+            foreach (var endpoint in area.Split(':'))
+            {
+                int i = 0;
+                if (i < endpoint.Length && endpoint[i] == '$') i++;
+                int letterStart = i;
+                while (i < endpoint.Length && char.IsAsciiLetter(endpoint[i])) i++;
+                int letters = i - letterStart;
+                if (i < endpoint.Length && endpoint[i] == '$') i++;
+                int digitStart = i;
+                while (i < endpoint.Length && char.IsAsciiDigit(endpoint[i])) i++;
+                int digits = i - digitStart;
+
+                // Anything else (sheet name, table ref, stray punctuation) is not
+                // ours to judge.
+                if (i != endpoint.Length || (letters == 0 && digits == 0)) continue;
+
+                // XFD is the widest in-grid column, so 4+ letters is out by
+                // construction — and stops the index accumulation below from
+                // overflowing on a long garbage run.
+                if (letters > 3) return endpoint;
+                if (letters > 0)
+                {
+                    int colIdx = 0;
+                    for (int k = letterStart; k < letterStart + letters; k++)
+                        colIdx = colIdx * 26 + (char.ToUpperInvariant(endpoint[k]) - 'A' + 1);
+                    if (colIdx > 16384) return endpoint;
+                }
+                if (digits > 0
+                    && (!long.TryParse(endpoint.AsSpan(digitStart, digits), out var row)
+                        || row < 1 || row > 1048576))
+                    return endpoint;
+            }
+        }
+        return null;
     }
 
     /// <summary>

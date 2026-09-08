@@ -15,6 +15,48 @@ namespace OfficeCli.Tests;
 public sealed class UpstreamRegressionTests
 {
     [Fact]
+    public void BatchPreservesWarningsOnTheirOwningItem()
+    {
+        using var temp = new TempDirectory();
+        var path = temp.File("batch-warnings.xlsx");
+        OpenXmlFixture.CreateWorkbook(path, "Sheet1");
+        using var handler = new ExcelHandler(path, editable: true);
+        var results = CommandBuilder.ApplyBatchItems(handler,
+        [
+            new BatchItem { Command = "set", Path = "/Sheet1/A1", Props = new()
+                { ["value"] = "42", ["numfmt"] = "invalid_fmt" } },
+            new BatchItem { Command = "set", Path = "/Sheet1/A2", Props = new()
+                { ["value"] = "43" } },
+        ], stopOnError: true, json: true);
+
+        Assert.Equal(2, results.Count);
+        Assert.All(results, result => Assert.True(result.Success));
+        Assert.Contains(results[0].Warnings!, warning => warning.Code == "invalid_number_format");
+        Assert.Null(results[1].Warnings);
+        var payload = JsonSerializer.Serialize(results[0], BatchJsonContext.Default.BatchResult);
+        var receipt = JsonSerializer.Deserialize(payload, BatchJsonContext.Default.BatchResult)!;
+        Assert.Equal("invalid_number_format", Assert.Single(receipt.Warnings!).Code);
+        Assert.False(WarningContext.IsActive);
+    }
+
+    [Fact]
+    public void PhoneticAnnotationsRemainSeparateInGetAndContainsQuery()
+    {
+        using var temp = new TempDirectory();
+        var path = temp.File("phonetic-query.xlsx");
+        OpenXmlFixture.CreateWorkbook(path, "Sheet1");
+        using (var handler = new ExcelHandler(path, editable: true))
+            handler.Set("/Sheet1/A1", new Dictionary<string, string>
+                { ["value"] = "漢字", ["phonetic"] = "カンジ" });
+
+        using var reopened = new ExcelHandler(path, editable: false);
+        Assert.Equal("漢字", reopened.Get("/Sheet1/A1").Text);
+        Assert.Equal("カンジ", reopened.Get("/Sheet1/A1").Format["phonetic"]);
+        Assert.Single(reopened.Query("cell:contains(漢字)"));
+        Assert.Empty(reopened.Query("cell:contains(カンジ)"));
+    }
+
+    [Fact]
     public void ExcelImportPersistsAfterDispose_Issue316()
     {
         using var temp = new TempDirectory();

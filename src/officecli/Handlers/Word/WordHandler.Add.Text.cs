@@ -64,7 +64,7 @@ public partial class WordHandler
             // warn (advisory, non-fatal) when the style id is not defined
             // in the styles part; still store the ref (lenient-input).
             if (!StyleIdExists(style))
-                LastAddWarnings.Add($"style '{style}' not found in styles part — will be referenced as-is");
+                LastAddWarnings.Add(StyleNotFoundWarning(style));
             pProps.ParagraphStyleId = new ParagraphStyleId { Val = style };
         }
         else if (properties.TryGetValue("styleName", out var styleName)
@@ -535,6 +535,10 @@ public partial class WordHandler
             // SpacingConverter.ParseWordSpacingSigned. Real docs (gov.cn TOC
             // overhangs) carry negative indents.
             ind.Left = SpacingConverter.ParseWordSpacingSigned(addLI).ToString();
+            // BUG-IND-ALIAS (#367): clear the ISO/strict spelling so a cloned or
+            // imported paragraph cannot keep a stale w:start next to the new
+            // w:left (two conflicting indents; a later normalizing save picks one).
+            ind.Start = null;
         }
         if (properties.TryGetValue("rightindent", out var addRI) || properties.TryGetValue("rightIndent", out addRI) || properties.TryGetValue("indentright", out addRI))
         {
@@ -542,6 +546,7 @@ public partial class WordHandler
             // CONSISTENCY(lenient-spacing): see leftindent above.
             // BUG-DUMP-NEGIND: signed (see leftIndent above).
             ind.Right = SpacingConverter.ParseWordSpacingSigned(addRI).ToString();
+            ind.End = null; // BUG-IND-ALIAS (#367): w:end is ISO for w:right.
         }
         if (properties.TryGetValue("hangingindent", out var addHI) || properties.TryGetValue("hangingIndent", out addHI) || properties.TryGetValue("hanging", out addHI))
         {

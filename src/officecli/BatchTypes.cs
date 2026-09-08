@@ -178,10 +178,12 @@ public class BatchItem
     public string? Xml { get; set; }
     // NEWLINE-SEMANTICS-V2: dumps are versioned via a leading
     // {"command":"meta","dumpVersion":2} item. v2 encodes soft line breaks
-    // as '\v' in text props ('\n' means a paragraph boundary); dumps
-    // WITHOUT a meta item are legacy v1, where '\n' meant a soft break —
-    // BatchCompat rewrites those on replay so old dump files keep restoring
-    // the exact original structure.
+    // as '\v' in text props ('\n' means a paragraph boundary). A batch that
+    // EXPLICITLY declares a version below 2 opts back into the pre-v2 reading
+    // and BatchCompat rewrites its '\n' to '\v' on replay; a batch with NO
+    // meta item follows current semantics, because a hand-written batch
+    // carries no meta either and reading those as legacy made one batch item
+    // behave differently from the identical single command.
     public int? DumpVersion { get; set; }
 
     internal static readonly HashSet<string> KnownFields = new(StringComparer.OrdinalIgnoreCase)
@@ -249,6 +251,8 @@ public class BatchResult
     public bool? RolledBack { get; set; }
     /// <summary>Machine-readable final status: rolled_back or failed.</summary>
     public string? Status { get; set; }
+    /// <summary>Advisory diagnostics produced while executing this item.</summary>
+    internal List<OfficeCli.Core.CliWarning>? Warnings { get; set; }
 }
 
 /// <summary>
@@ -272,6 +276,8 @@ internal class BatchResultConverter : JsonConverter<BatchResult>
         if (root.TryGetProperty("committed", out var committed)) result.Committed = committed.GetBoolean();
         if (root.TryGetProperty("rolledBack", out var rolledBack)) result.RolledBack = rolledBack.GetBoolean();
         if (root.TryGetProperty("status", out var status)) result.Status = status.GetString();
+        if (root.TryGetProperty("warnings", out var wrn))
+            result.Warnings = JsonSerializer.Deserialize(wrn.GetRawText(), OfficeCli.Core.AppJsonContext.Default.ListCliWarning);
         return result;
     }
 
@@ -309,6 +315,11 @@ internal class BatchResultConverter : JsonConverter<BatchResult>
         if (value.Committed.HasValue) writer.WriteBoolean("committed", value.Committed.Value);
         if (value.RolledBack.HasValue) writer.WriteBoolean("rolledBack", value.RolledBack.Value);
         if (value.Status != null) writer.WriteString("status", value.Status);
+        if (value.Warnings is { Count: > 0 })
+        {
+            writer.WritePropertyName("warnings");
+            JsonSerializer.Serialize(writer, value.Warnings, OfficeCli.Core.AppJsonContext.Default.ListCliWarning);
+        }
         writer.WriteEndObject();
     }
 

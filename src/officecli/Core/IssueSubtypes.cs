@@ -24,6 +24,21 @@ public static class IssueSubtypes
     public const string DefinedNameBroken = "definedname_broken";
     public const string DefinedNameTargetMissing = "definedname_target_missing";
     public const string BrokenPartRef = "broken_part_ref";
+    /// <summary>xlsx-only: a visible numeric/date cell with an explicit,
+    /// width-stable number format cannot fit its formatted value in the visible
+    /// column budget. General and unresolved formats are intentionally skipped
+    /// because Excel can adapt their display to the available width. Format
+    /// bucket, Warning.</summary>
+    public const string NumericOverflow = "numeric_overflow";
+    /// <summary>xlsx-only: a visible General-formatted numeric cell whose value
+    /// needs more than 11 significant digits. Excel's General display caps
+    /// there and switches to scientific notation REGARDLESS of column width,
+    /// so the delivered document shows a rounded number with no visual cue and
+    /// widening the column does not fix it — the remedy is an explicit number
+    /// format. Disjoint from <see cref="NumericOverflow"/>, which covers the
+    /// opposite case (an explicit format that cannot fit the column).
+    /// Format bucket, Warning.</summary>
+    public const string GeneralPrecisionLoss = "general_precision_loss";
     /// <summary>pptx-only: notesSlide raw-set passthrough references an
     /// rId (<c>r:embed</c> / <c>r:link</c>) the dump pass cannot reproduce
     /// on the replay target (e.g. a non-image rel attached to a NotesSlidePart
@@ -86,12 +101,11 @@ public static class IssueSubtypes
         ChartPercentageAxisFormat, ChartThresholdMissing,
         ExcelPrintLayout,
         DefinedNameBroken, DefinedNameTargetMissing,
-        BrokenPartRef,
+        BrokenPartRef, NumericOverflow, GeneralPrecisionLoss,
     };
 
-    /// <summary>Subtypes that are scanned by default and surface under
-    /// <c>--type content</c>. Opt-in subtypes (currently only
-    /// <see cref="ChartCacheStale"/>) require an exact-name request.</summary>
+    /// <summary>Subtypes that require an exact-name request rather than being
+    /// scanned by default or via their broad issue bucket.</summary>
     public static readonly string[] OptInSubtypes = new[] { ChartCacheStale, PptLayout };
 
     /// <summary>One-line summary suitable for the CLI <c>--type</c> help
@@ -103,12 +117,12 @@ public static class IssueSubtypes
         return "Issue type filter. Broad buckets: "
             + string.Join(", ", BucketNames)
             + " (alias " + string.Join(", ", BucketAliases) + "). "
-            + "Subtypes (Content bucket, returned by default and via --type content): "
+            + "Subtypes (returned by default and via their matching broad bucket): "
             + string.Join(", ", defaults) + ". "
             + "Opt-in only (request by exact name; not included in --type content): "
             + string.Join(", ", OptInSubtypes) + ". "
-            + "Subtypes are format-specific — formula_* / chart_* / definedname_* apply to xlsx, "
-            + "field_* to docx, chart_* to xlsx or pptx, slide_field_* / notes_unresolved_rid / broken_part_ref / low_contrast / duplicate_bullet / font_substitution_risk / text_overflow / off_slide_content / text_occlusion / ppt_layout to pptx; requesting a subtype that does not apply to "
+            + "Subtypes are format-specific — formula_* / definedname_* / numeric_overflow / general_precision_loss / excel_print_layout apply to xlsx, "
+            + "field_* to docx, chart_* and text_overflow to xlsx or pptx, slide_field_* / notes_unresolved_rid / broken_part_ref / low_contrast / duplicate_bullet / font_substitution_risk / off_slide_content / text_occlusion / ppt_layout to pptx; requesting a subtype that does not apply to "
             + "the queried file returns count=0 (not an error). "
             + "All values are case-insensitive and surrounding whitespace is trimmed.";
     }

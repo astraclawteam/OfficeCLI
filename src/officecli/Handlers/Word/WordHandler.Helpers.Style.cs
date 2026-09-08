@@ -31,6 +31,23 @@ public partial class WordHandler
     }
 
     /// <summary>
+    /// Issue #366: `style=`/`styleId=` target the OOXML styleId. Passing a DISPLAY
+    /// NAME ("heading 2" where the styleId is "Heading2" — exactly what a Word or
+    /// Google Docs export looks like) stores a dangling pStyle that Word renders as
+    /// body text and drops on save. The generic "not found" advisory left the caller
+    /// with nowhere to go, so when the value IS an existing style's display name,
+    /// name the channel that resolves it and the id it resolves to.
+    /// </summary>
+    private string StyleNotFoundWarning(string value)
+    {
+        var resolved = ResolveStyleIdFromName(value);
+        return resolved != null
+            ? $"style '{value}' is a display name, not a styleId — will be referenced as-is. "
+                + $"Use styleName='{value}' to resolve it (styleId '{resolved}')."
+            : $"style '{value}' not found in styles part — will be referenced as-is";
+    }
+
+    /// <summary>
     /// Returns true if a style with the given styleId exists in the Styles part.
     /// "Normal" is implicit in OOXML and considered to exist even when the
     /// blank-document StyleDefinitionsPart is empty/absent — matches Word's

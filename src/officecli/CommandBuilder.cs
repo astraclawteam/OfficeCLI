@@ -1126,9 +1126,19 @@ static partial class CommandBuilder
                 if (item.Text == null)
                     throw new ArgumentException("'import' command requires 'text' field with the CSV/TSV content.");
                 // CONSISTENCY(import-vocabulary): props mirror the standalone
-                // command's options — format=csv|tsv, header, start-cell.
+                // command's options — format=csv|tsv, delimiter, decimal, header,
+                // start-cell. Keep this list in step with CommandBuilder.Import.cs;
+                // a prop missing here is a silently different batch behaviour.
                 char importDelim = ',';
-                if (props.TryGetValue("format", out var importFmt) && !string.IsNullOrEmpty(importFmt))
+                if (props.TryGetValue("delimiter", out var importDelimRaw) && !string.IsNullOrEmpty(importDelimRaw))
+                {
+                    importDelim = ParseImportDelimiter(importDelimRaw);
+                }
+                else if (OfficeCli.Core.CsvSepDeclaration.TryRead(item.Text, out var declaredSep, out _))
+                {
+                    importDelim = declaredSep;
+                }
+                else if (props.TryGetValue("format", out var importFmt) && !string.IsNullOrEmpty(importFmt))
                 {
                     importDelim = importFmt.ToLowerInvariant() switch
                     {
@@ -1144,7 +1154,14 @@ static partial class CommandBuilder
                     ? importSc
                     : props.TryGetValue("startcell", out var importSc2) && !string.IsNullOrEmpty(importSc2)
                         ? importSc2 : "A1";
-                return importXl.Import(importParent, item.Text, importDelim, importHeader, importStart);
+                var importDecimal = ParseImportDecimal(
+                    props.TryGetValue("decimal", out var importDec) ? importDec : null, importDelim);
+                // Judge the first DATA line, not a `sep=X` declaration.
+                var importWarnText = OfficeCli.Core.CsvSepDeclaration.TryRead(item.Text, out _, out var afterDeclB)
+                    ? afterDeclB : item.Text;
+                if (LikelyWrongDelimiterWarning(importWarnText, importDelim) is { } importWarn)
+                    Console.Error.WriteLine(importWarn);
+                return importXl.Import(importParent, item.Text, importDelim, importHeader, importStart, importDecimal);
             }
             case "remove":
             {
@@ -1445,6 +1462,11 @@ static partial class CommandBuilder
                                 System.Text.Json.JsonSerializer.Serialize(slimWriter, r.Item, BatchJsonContext.Default.BatchItem);
                             }
                         }
+                        if (r.Warnings is { Count: > 0 })
+                        {
+                            slimWriter.WritePropertyName("warnings");
+                            System.Text.Json.JsonSerializer.Serialize(slimWriter, r.Warnings, OfficeCli.Core.AppJsonContext.Default.ListCliWarning);
+                        }
                         slimWriter.WriteEndObject();
                     }
                     slimWriter.WriteEndArray();
@@ -1488,6 +1510,9 @@ static partial class CommandBuilder
                 {
                     @out.WriteLine($"{prefix}ERROR: {r.Error}");
                 }
+                if (r.Warnings is { Count: > 0 })
+                    foreach (var warning in r.Warnings)
+                        @out.WriteLine($"  WARNING: {warning.Message}");
             }
 
             var succeeded = receipts.Count(r => r.Success);
