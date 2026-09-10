@@ -834,6 +834,11 @@ public class ResidentServer : IDisposable
             var isValidate = request.Command.Equals("validate", StringComparison.OrdinalIgnoreCase);
             var validateFailure = isValidate && _lastValidateErrorCount > 0;
             if (isValidate) _lastValidateErrorCount = 0;
+            // raw-set / add-part applied but introduced validator errors:
+            // "applied with caveats" → exit 2, alongside UNSUPPORTED. Read and
+            // clear per request so a caveat never leaks into the next command.
+            var rawCaveats = _lastRawMutationHadValidationCaveats;
+            _lastRawMutationHadValidationCaveats = false;
 
             if (request.Json)
             {
@@ -883,22 +888,22 @@ public class ResidentServer : IDisposable
                 int jsonExitCode = 0;
                 if (batchFailure || validateFailure)
                     jsonExitCode = 1;
-                else if (stderr.Contains("UNSUPPORTED") || stderr.Contains(UnrecognizedLatexMarker))
+                else if (rawCaveats || stderr.Contains("UNSUPPORTED") || stderr.Contains(UnrecognizedLatexMarker))
                     jsonExitCode = 2;
-                else if (!EnvelopeSuccess(envelope) || stderr.Contains("VALIDATION:"))
+                else if (!EnvelopeSuccess(envelope))
                     jsonExitCode = 1;
                 return MakeResponse(jsonExitCode, envelope, "");
             }
 
-            // BUG-DUMP12-01: surface stderr "VALIDATION:" token (emitted by
-            // ExecuteRawSet / ExecuteAddPart when the SDK validator gains new
-            // errors) as exit 1 so callers can detect rejected raw mutations.
-            // Batch/validate verdict failures outrank applied-with-caveats
-            // markers (mirrors the non-resident batch path); single-command
-            // marker precedence is unchanged.
+            // Text mode: batch/validate verdict failures (1) outrank the
+            // applied-with-caveats markers (2): UNSUPPORTED, unrecognized
+            // LaTeX, and a raw-set / add-part that introduced validator
+            // errors (rawCaveats — the mutation is applied, see
+            // ReportRawMutationOutcome; exit 1 here made callers retry and
+            // duplicate content, issue #374).
             int exitCode = (batchFailure || validateFailure) ? 1
-                : ((stderr.Contains("UNSUPPORTED") || stderr.Contains(UnrecognizedLatexMarker)) ? 2
-                : (stderr.Contains("VALIDATION:") ? 1 : 0));
+                : ((rawCaveats || stderr.Contains("UNSUPPORTED") || stderr.Contains(UnrecognizedLatexMarker)) ? 2
+                : 0);
             return MakeResponse(exitCode, stdout, stderr);
         }
         catch (Exception ex)
@@ -2473,23 +2478,7 @@ public class ResidentServer : IDisposable
 
         var errorsBefore = _handler.Validate().Select(e => e.Description).ToHashSet();
         _handler.RawSet(partPath, xpath, action, xml);
-
-        var errorsAfter = _handler.Validate();
-        var newErrors = errorsAfter.Where(e => !errorsBefore.Contains(e.Description)).ToList();
-        if (newErrors.Count > 0)
-        {
-            // BUG-DUMP12-01: emit VALIDATION report to stderr (not stdout) so the
-            // ProcessRequest exit-code logic — which checks stderr for failure
-            // tokens — promotes the request to a non-zero exit code. Writing to
-            // stdout also corrupted batch --json output (BUG-R5-01 rationale).
-            Console.Error.WriteLine($"VALIDATION: {newErrors.Count} new error(s) introduced:");
-            foreach (var err in newErrors)
-            {
-                Console.Error.WriteLine($"  [{err.ErrorType}] {err.Description}");
-                if (err.Path != null) Console.Error.WriteLine($"    Path: {err.Path}");
-                if (err.Part != null) Console.Error.WriteLine($"    Part: {err.Part}");
-            }
-        }
+        ReportRawMutationOutcome(req, $"raw-set applied: {action} at {xpath}", errorsBefore);
     }
 
     private void ExecuteAddPart(ResidentRequest req)
@@ -2498,23 +2487,38 @@ public class ResidentServer : IDisposable
         var type = req.GetArg("type", "");
         var errorsBefore = _handler.Validate().Select(e => e.Description).ToHashSet();
         var (relId, partPath) = _handler.AddPart(parent, type);
-        Console.WriteLine($"Created {type} part: relId={relId} path={partPath}");
+        ReportRawMutationOutcome(req, $"Created {type} part: relId={relId} path={partPath}", errorsBefore);
+    }
 
-        var errorsAfter = _handler.Validate();
-        var newErrors = errorsAfter.Where(e => !errorsBefore.Contains(e.Description)).ToList();
-        if (newErrors.Count > 0)
+    // Shared tail of raw-set / add-part. Mirrors CommandBuilder.Raw.cs so the
+    // resident and one-shot paths emit the same envelope for the same outcome:
+    // the mutation is APPLIED even when the SDK validator gains new errors
+    // (the validator is advisory — it flags element order Word itself opens
+    // fine — and raw-set is the escape hatch, so it never rolls back). The
+    // caveat rides as validation_error warnings on a success:true envelope
+    // and the request exits 2 ("applied with caveats", the unsupported_property
+    // code). Issue #374: this path used to leave stdout empty and print the
+    // report to stderr, which the dispatcher turned into success:false / exit 1
+    // — a retry signal — so callers re-issued the write and duplicated content.
+    private void ReportRawMutationOutcome(ResidentRequest req, string message, HashSet<string> errorsBefore)
+    {
+        var warnings = CommandBuilder.ReportNewErrorsAsWarnings(_handler, errorsBefore);
+        if (warnings is { Count: > 0 }) _lastRawMutationHadValidationCaveats = true;
+        if (req.Json)
         {
-            // BUG-DUMP12-01: route VALIDATION report to stderr — see ExecuteRawSet
-            // for rationale (mirrors CommandBuilder.ReportNewErrors and lets the
-            // ProcessRequest exit-code logic promote the request to exit 1).
-            Console.Error.WriteLine($"VALIDATION: {newErrors.Count} new error(s) introduced:");
-            foreach (var err in newErrors)
-            {
-                Console.Error.WriteLine($"  [{err.ErrorType}] {err.Description}");
-                if (err.Path != null) Console.Error.WriteLine($"    Path: {err.Path}");
-                if (err.Part != null) Console.Error.WriteLine($"    Part: {err.Part}");
-            }
+            // Full envelope here; nothing on stderr, or the dispatcher's
+            // BuildWarnings would merge a second copy of every line.
+            Console.WriteLine(OutputFormatter.WrapEnvelopeText(message, warnings));
+            return;
         }
+        Console.WriteLine(message);
+        if (warnings is not { Count: > 0 }) return;
+        // Text mode keeps the report on stderr (BUG-DUMP12-01: stdout would
+        // corrupt batch --json output); exit 2 comes from the flag, not from
+        // the dispatcher grepping this text.
+        Console.Error.WriteLine($"VALIDATION: {warnings.Count} new error(s) introduced:");
+        foreach (var w in warnings)
+            Console.Error.WriteLine($"  {w.Message}");
     }
 
     // R7-bt-3 / R7-bt-4: validate exit code & stream destination.
@@ -2525,6 +2529,11 @@ public class ResidentServer : IDisposable
     // to a non-zero exit code, and write the failure report to stderr —
     // mirrors the standard convention for diagnostic / lint tools.
     private int _lastValidateErrorCount;
+
+    // Set by ReportRawMutationOutcome when raw-set / add-part applied but the
+    // SDK validator gained new errors; ProcessRequest reads+clears it and maps
+    // the request to exit 2 (applied with caveats), never 1.
+    private bool _lastRawMutationHadValidationCaveats;
 
     private void ExecuteValidate()
     {

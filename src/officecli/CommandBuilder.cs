@@ -1242,7 +1242,11 @@ static partial class CommandBuilder
                 var partPath = item.Part ?? "/document";
                 var xpath = item.Xpath ?? "";
                 var action = item.Action ?? "";
+                // Same post-write validator diff the single-shot raw-set does;
+                // a batch item used to apply raw XML with no diagnostic at all.
+                var errorsBefore = handler.Validate().Select(e => e.Description).ToHashSet();
                 handler.RawSet(partPath, xpath, action, item.Xml);
+                ReportNewErrorsToWarningContext(handler, errorsBefore);
                 return $"raw-set {action} applied";
             }
             case "add-part":
@@ -1251,7 +1255,9 @@ static partial class CommandBuilder
                     throw new ArgumentException("'add-part' command requires 'parent' field. Example: {\"command\": \"add-part\", \"parent\": \"/slide[1]\", \"type\": \"smartart\", \"props\": {\"data\": \"rId2\"}}");
                 if (string.IsNullOrEmpty(item.Type))
                     throw new ArgumentException("'add-part' command requires 'type' field. Supported (pptx): chart, smartart, video, audio, model3d, ole, image, hyperlink, theme.");
+                var errorsBefore = handler.Validate().Select(e => e.Description).ToHashSet();
                 var (relId, partOut) = handler.AddPart(item.Parent, item.Type, props);
+                ReportNewErrorsToWarningContext(handler, errorsBefore);
                 return $"Created {item.Type} part: relId={relId} path={partOut}";
             }
             case "validate":
@@ -1558,6 +1564,18 @@ static partial class CommandBuilder
                 (err.Part != null ? $" (Part: {err.Part})" : ""),
             Code = "validation_error"
         }).ToList();
+    }
+
+    // Batch-item flavour: the validator diff rides on the item's own
+    // WarningContext scope (ApplyBatchItems opens one per item), so the
+    // caveat lands in that step's `warnings` like every other per-item
+    // diagnostic instead of on stdout.
+    internal static void ReportNewErrorsToWarningContext(OfficeCli.Core.IDocumentHandler handler, HashSet<string> errorsBefore)
+    {
+        var warnings = ReportNewErrorsAsWarnings(handler, errorsBefore);
+        if (warnings == null || !OfficeCli.Core.WarningContext.IsActive) return;
+        foreach (var w in warnings)
+            OfficeCli.Core.WarningContext.Add(w.Message, w.Code);
     }
 
     internal static void ReportNewErrors(OfficeCli.Core.IDocumentHandler handler, HashSet<string> errorsBefore, List<CliWarning>? preComputed = null)
