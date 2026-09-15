@@ -1267,13 +1267,17 @@ public partial class PowerPointHandler
     private static OpenXmlElement? ResolvePlaceholderLevelPpr(Shape shape, OpenXmlPart part,
         int level, Func<OpenXmlElement, bool> match)
     {
+        // 1. Shape's own list style. This applies to EVERY shape, placeholder or
+        // not — a plain text box carries its alignment/defRPr in its own
+        // <a:lstStyle>/<a:lvlNpPr> just as often (a layout's slide-number box
+        // with lvl1pPr algn="r" and no paragraph pPr rendered left-aligned
+        // because the placeholder gate below short-circuited this step).
+        var lstStyle = shape.TextBody?.GetFirstChild<Drawing.ListStyle>();
+        if (GetLevelPpr(lstStyle, level) is { } own && match(own)) return own;
+
         var ph = shape.NonVisualShapeProperties?.ApplicationNonVisualDrawingProperties
             ?.GetFirstChild<PlaceholderShape>();
         if (ph == null) return null;
-
-        // 1. Shape's own list style
-        var lstStyle = shape.TextBody?.GetFirstChild<Drawing.ListStyle>();
-        if (GetLevelPpr(lstStyle, level) is { } own && match(own)) return own;
 
         var phType = ph.Type?.HasValue == true ? ph.Type.Value : PlaceholderValues.Body;
         bool isTitle = phType == PlaceholderValues.Title || phType == PlaceholderValues.CenteredTitle;
@@ -2178,8 +2182,8 @@ public partial class PowerPointHandler
 
         if (preset.StartsWith("bentConnector", StringComparison.Ordinal))
         {
-            // Bent connectors: right-angle polyline. Use viewBox=0..100 so stretched
-            // preserveAspectRatio=none fills the container.
+            // Bent connectors: construct the right-angle polyline in normalized
+            // coordinates, then scale it to the connector's point dimensions.
             // bentConnector2: single 90-degree bend (2 segments, 3 points).
             // bentConnector3 (default): 3 segments with mid bend — (0,0) -> (50,0) -> (50,100) -> (100,100).
             // bentConnector4/5: approximate with 25/75 splits when no adjustments set.
@@ -2216,7 +2220,11 @@ public partial class PowerPointHandler
             // already flips via svgX1/Y1/X2/Y2). flipH → x'=100-x, flipV → y'=100-y.
             points = MirrorConnectorPoints(points, flipH, flipV);
             var frame = GetConnectorSvgFrame(points);
-            sb.AppendLine($"      <svg viewBox=\"{frame.ViewBox}\" preserveAspectRatio=\"none\" style=\"position:absolute;left:{N(frame.MinX)}%;top:{N(frame.MinY)}%;width:{N(frame.Width)}%;height:{N(frame.Height)}%;overflow:visible;display:block\">");
+            // Keep adjusted elbows inside the expanded viewport while using
+            // real point coordinates so thin connectors retain uniform strokes.
+            points = ScaleConnectorPoints(points, widthPt, heightPt);
+            var viewBox = $"{N(frame.MinX * widthPt / 100)} {N(frame.MinY * heightPt / 100)} {N(frame.Width * widthPt / 100)} {N(frame.Height * heightPt / 100)}";
+            sb.AppendLine($"      <svg viewBox=\"{viewBox}\" preserveAspectRatio=\"none\" style=\"position:absolute;left:{N(frame.MinX)}%;top:{N(frame.MinY)}%;width:{N(frame.Width)}%;height:{N(frame.Height)}%;overflow:visible;display:block\">");
             if (!string.IsNullOrEmpty(markerDefs))
                 sb.AppendLine($"        {markerDefs}");
             sb.AppendLine($"        <polyline points=\"{points}\" {strokeAttrs}/>");
@@ -2237,7 +2245,9 @@ public partial class PowerPointHandler
             // R27: mirror the bezier control points in the 0..100 viewBox when
             // flipH/flipV is set (parity with the bent + straight branches).
             d = MirrorConnectorPath(d, flipH, flipV);
-            sb.AppendLine("      <svg width=\"100%\" height=\"100%\" viewBox=\"0 0 100 100\" preserveAspectRatio=\"none\" style=\"overflow:visible;display:block\">");
+            // Same real-box authoring as the bent branch (uniform stroke width).
+            d = ScaleConnectorPath(d, widthPt, heightPt);
+            sb.AppendLine($"      <svg width=\"100%\" height=\"100%\" viewBox=\"0 0 {widthPt} {heightPt}\" preserveAspectRatio=\"none\" style=\"overflow:visible;display:block\">");
             if (!string.IsNullOrEmpty(markerDefs))
                 sb.AppendLine($"        {markerDefs}");
             sb.AppendLine($"        <path d=\"{d}\" {strokeAttrs}/>");
@@ -2265,6 +2275,44 @@ public partial class PowerPointHandler
             sb.AppendLine("</div>");
         }
         sb.AppendLine("    </div>");
+    }
+
+    // Map 0..100 percent coordinates into the connector's real pt box so the
+    // SVG can use a viewBox equal to its rendered size (uniform stroke scaling).
+    private static string ScaleConnectorPoints(string points, double widthPt, double heightPt)
+    {
+        var ci = System.Globalization.CultureInfo.InvariantCulture;
+        var pairs = points.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        for (var i = 0; i < pairs.Length; i++)
+        {
+            var xy = pairs[i].Split(',');
+            if (xy.Length != 2) continue;
+            if (double.TryParse(xy[0], System.Globalization.NumberStyles.Float, ci, out var px))
+                xy[0] = (px / 100.0 * widthPt).ToString("0.###", ci);
+            if (double.TryParse(xy[1], System.Globalization.NumberStyles.Float, ci, out var py))
+                xy[1] = (py / 100.0 * heightPt).ToString("0.###", ci);
+            pairs[i] = $"{xy[0]},{xy[1]}";
+        }
+        return string.Join(' ', pairs);
+    }
+
+    // Path form of ScaleConnectorPoints for the bezier branch: every "x,y" pair
+    // in the M/Q/C data is scaled; the command letters pass through.
+    private static string ScaleConnectorPath(string d, double widthPt, double heightPt)
+    {
+        var ci = System.Globalization.CultureInfo.InvariantCulture;
+        var tokens = d.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        for (var i = 0; i < tokens.Length; i++)
+        {
+            var xy = tokens[i].Split(',');
+            if (xy.Length != 2) continue;
+            if (double.TryParse(xy[0], System.Globalization.NumberStyles.Float, ci, out var px))
+                xy[0] = (px / 100.0 * widthPt).ToString("0.###", ci);
+            if (double.TryParse(xy[1], System.Globalization.NumberStyles.Float, ci, out var py))
+                xy[1] = (py / 100.0 * heightPt).ToString("0.###", ci);
+            tokens[i] = $"{xy[0]},{xy[1]}";
+        }
+        return string.Join(' ', tokens);
     }
 
     // R27: mirror a "x,y x,y ..." polyline-points string in the 0..100 viewBox.

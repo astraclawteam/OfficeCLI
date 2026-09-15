@@ -64,7 +64,7 @@ static partial class CommandBuilder
                 "  officecli skills list                   List all available skills",
                 "",
                 "Skills: pptx, word, excel, word-form, morph-ppt, morph-ppt-3d, pitch-deck, academic-paper, data-dashboard, financial-model",
-                "Agents: claude, copilot, codex, cursor, windsurf, minimax, opencode, openclaw, nanobot, zeroclaw, hermes, all",
+                "Agents: claude, copilot, codex, cursor, pi, windsurf, minimax, opencode, openclaw, nanobot, zeroclaw, hermes, dsh, all",
             },
             ["load_skill"] = new[]
             {
@@ -83,7 +83,7 @@ static partial class CommandBuilder
                 "  officecli install <target>  Install to a specific agent (claude, copilot, cursor, vscode, ...)",
                 "",
                 "Equivalent to: installing the binary, then `officecli skills install` and `officecli mcp <target>`.",
-                "Targets: claude, copilot, codex, cursor, windsurf, vscode, minimax, opencode, openclaw, nanobot, zeroclaw, hermes, all",
+                "Targets: claude, copilot, codex, cursor, pi, windsurf, vscode, minimax, opencode, openclaw, nanobot, zeroclaw, hermes, dsh, all",
             },
         };
 
@@ -327,6 +327,27 @@ static partial class CommandBuilder
                 if (match != null)
                     return rootCommand.Parse(new[] { match.Name, "--help" }).Invoke();
             }
+        }
+
+        // Case 1c: `help <format> <command>` where the trailing token is a CLI
+        // command rather than a schema element (`help docx move`, `help pptx
+        // swap`). move/swap/validate/… have no element schema, so this used to
+        // fall to Case 3 and die with "unknown element 'move' — did you mean
+        // ole?" on stderr and nothing on stdout, which a help-forwarding caller
+        // showed the user as an empty reference. Route it to the command's own
+        // SCL help, the same output `officecli move --help` gives.
+        if (rootCommand != null
+            && SchemaHelpLoader.IsKnownFormat(format)
+            && verb == null
+            && element != null
+            && !HelpVerbs.Contains(element, StringComparer.OrdinalIgnoreCase)
+            && rootCommand.Subcommands.FirstOrDefault(
+                   c => string.Equals(c.Name, element, StringComparison.OrdinalIgnoreCase)
+                        && !c.Hidden && c.Name != "help") is { } cmd)
+        {
+            Console.WriteLine($"'{cmd.Name}' is a command, not a {SchemaHelpLoader.NormalizeFormat(format)} element — showing command help. Element reference: officecli help {SchemaHelpLoader.NormalizeFormat(format)} <element>");
+            Console.WriteLine();
+            return rootCommand.Parse(new[] { cmd.Name, "--help" }).Invoke();
         }
 
         // Validate verb if supplied.

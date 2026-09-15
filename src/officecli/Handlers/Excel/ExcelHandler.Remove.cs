@@ -15,10 +15,11 @@ namespace OfficeCli.Handlers;
 public partial class ExcelHandler
 {
     public string? Remove(string path, Dictionary<string, string>? properties = null)
+        => MarkModified(() => RemoveCore(path, properties));
+
+    private string? RemoveCore(string path, Dictionary<string, string>? properties)
     {
         // Phase 4: trackChange.* is Word-only. Silently ignored here.
-        var modifiedBeforeCall = Modified;
-        Modified = true;
         // CONSISTENCY(container-remove-guard): reject removal of the
         // workbook root up front. Sheet-level removal has its own guard
         // (can't remove last sheet) further down and is a legitimate op;
@@ -268,16 +269,8 @@ public partial class ExcelHandler
             // side-effect-free.
             var workbook = GetWorkbook();
             var definedNames = workbook.GetFirstChild<DefinedNames>();
-            try
-            {
-                PreflightDefinedNamesForSheetRemoval(
-                    workbookPart, sheetWsPartForCheck, sheetName, removedSheetIndex, definedNames);
-            }
-            catch
-            {
-                Modified = modifiedBeforeCall;
-                throw;
-            }
+            PreflightDefinedNamesForSheetRemoval(
+                workbookPart, sheetWsPartForCheck, sheetName, removedSheetIndex, definedNames);
 
             var relId = sheet.Id?.Value;
             var sheetWsPart = relId != null

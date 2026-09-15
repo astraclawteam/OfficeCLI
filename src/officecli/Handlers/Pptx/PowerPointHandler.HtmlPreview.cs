@@ -283,7 +283,7 @@ public partial class PowerPointHandler
         }
         pending.forEach(function(el) {
             try {
-                katex.render(el.dataset.formula, el, { throwOnError: false, displayMode: el.dataset.display === 'true' });
+                katex.render(el.dataset.formula, el, { throwOnError: false, displayMode: el.dataset.display === '1' });
                 el.classList.add('katex-rendered');
             } catch(e) { el.textContent = el.dataset.formula + ' (Error: ' + e.message + '. See https://katex.org/docs/supported.html for supported syntax.)'; }
         });
