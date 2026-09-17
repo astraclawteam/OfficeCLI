@@ -23,23 +23,14 @@ public partial class PowerPointHandler
             throw new ArgumentException($"Slide {slideIdx} not found (total: {slidePartsN.Count})");
         var notesPart = EnsureNotesSlidePart(slidePartsN[PathIndex.ToArrayIndex(slideIdx)]);
         var unsupportedN = new List<string>();
-        // Pull the notes body shape (idx=1 placeholder) so run-level keys
+        // Pull the notes body shape (type=body placeholder) so run-level keys
         // (lang, lang.*, font, size, color, …) route through the same
         // SetRunOrShapeProperties pipeline as regular slide shapes.
         // CONSISTENCY(notes-shape-set): notes had its own bespoke key
         // handling that recognised only text/direction; other run keys
         // surfaced as UNSUPPORTED. The notes body is just a Shape — it
         // should accept the full run-attr surface.
-        Shape? notesBody = null;
-        var notesShapeTree = notesPart.NotesSlide?.CommonSlideData?.ShapeTree;
-        if (notesShapeTree != null)
-        {
-            foreach (var sh in notesShapeTree.Elements<Shape>())
-            {
-                var ph = sh.NonVisualShapeProperties?.ApplicationNonVisualDrawingProperties?.GetFirstChild<PlaceholderShape>();
-                if (ph?.Index?.Value == 1) { notesBody = sh; break; }
-            }
-        }
+        var notesBody = FindNotesBodyShape(notesPart.NotesSlide?.CommonSlideData?.ShapeTree);
 
         var deferredRunProps = new Dictionary<string, string>();
         foreach (var (key, value) in properties)

@@ -2018,6 +2018,25 @@ public partial class WordHandler
     }
 
     /// <summary>
+    /// The abstractNumId / numId values currently defined in the numbering
+    /// part. Used by the batch pre-pass (BatchCompat.RemapNumberingIds) to
+    /// detect collisions when a dump of another document's numbering is
+    /// replayed into this one.
+    /// </summary>
+    internal (HashSet<int> AbstractNumIds, HashSet<int> NumIds) GetNumberingDefinitionIds()
+    {
+        var abs = new HashSet<int>();
+        var nums = new HashSet<int>();
+        var numbering = _doc.MainDocumentPart?.NumberingDefinitionsPart?.Numbering;
+        if (numbering == null) return (abs, nums);
+        foreach (var a in numbering.Elements<AbstractNum>())
+            if (a.AbstractNumberId?.Value is int aid) abs.Add(aid);
+        foreach (var n in numbering.Elements<NumberingInstance>())
+            if (n.NumberID?.Value is int nid) nums.Add(nid);
+        return (abs, nums);
+    }
+
+    /// <summary>
     /// BUG-R4F-02: true when a &lt;w:num w:numId=N&gt; instance is defined in the
     /// numbering part. The dump emitter consults this to avoid emitting an
     /// `add p {numId:N}` for a paragraph whose numId is dangling (no matching

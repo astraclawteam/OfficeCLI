@@ -65,6 +65,15 @@ static partial class CommandBuilder
         ICollection<string>? unrecognizedLatex = null)
     {
         var results = new List<BatchResult>();
+        // Cross-document numbering replay (issue #404): give source list
+        // definitions whose ids the target already uses fresh ids, and
+        // rewrite this batch's references to them. All batch transports
+        // (CLI, resident, SDK executor) funnel through here.
+        if (handler is OfficeCli.Handlers.WordHandler numWord)
+        {
+            var (absIds, numIds) = numWord.GetNumberingDefinitionIds();
+            OfficeCli.Core.BatchCompat.RemapNumberingIds(items, absIds, numIds);
+        }
         for (int bi = 0; bi < items.Count; bi++)
         {
             var item = items[bi];

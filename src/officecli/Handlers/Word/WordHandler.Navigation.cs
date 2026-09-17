@@ -592,6 +592,19 @@ public partial class WordHandler
         {
             anchor = wrapAnchor;
         }
+        // Issue #402: `query run` flattens runs nested in inline containers
+        // (w:ins / w:del / w:hyperlink / w:sdt …) into the paragraph's r[N]
+        // sequence, so an explicit anchor may resolve to a run that is not a
+        // DIRECT child of the parent. Re-target it to its paragraph-level
+        // ancestor: --after inserts after the whole container, --before in
+        // front of it. (The find: path goes further and splits the container
+        // at the exact offset; an explicit run anchor is a whole-run anchor.)
+        if (!siblings.Contains(anchor))
+        {
+            var top = anchor;
+            while (top.Parent != null && !ReferenceEquals(top.Parent, parent)) top = top.Parent;
+            if (ReferenceEquals(top.Parent, parent)) anchor = top;
+        }
         var anchorIdx = siblings.IndexOf(anchor);
         if (anchorIdx < 0)
             throw new ArgumentException($"Anchor element is not a child of {parentPath}: {anchorPath}");
